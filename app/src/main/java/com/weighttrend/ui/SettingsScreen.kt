@@ -60,6 +60,9 @@ fun SettingsScreen(vm: AppViewModel, modifier: Modifier = Modifier) {
     val importLibra = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         uri?.let { vm.importLibra(it) }
     }
+    val importZepp = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        uri?.let { vm.importZepp(it) }
+    }
     val exportNewFit = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri ->
         uri?.let { vm.exportFit(it, onlyNew = true) }
     }
@@ -152,11 +155,16 @@ fun SettingsScreen(vm: AppViewModel, modifier: Modifier = Modifier) {
         }
 
         // ---------- Data ----------
-        Section("Данные", "Импорт истории из Libra и резервная копия в формате Libra.") {
+        Section(
+            "Данные",
+            "Импорт истории из Libra (CSV-экспорт) и Zepp Life (файл BODY из экспорта). " +
+                "Повторяющиеся взвешивания не дублируются. Резервная копия сохраняется в формате Libra.",
+        ) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 FilledTonalButton(onClick = { importLibra.launch(arrayOf("text/*", "application/octet-stream", "*/*")) }) { Text("Импорт Libra") }
-                OutlinedButton(onClick = { exportCsv.launch("weight_backup_${LocalDate.now()}.csv") }) { Text("Резервная копия") }
+                FilledTonalButton(onClick = { importZepp.launch(arrayOf("text/*", "application/octet-stream", "*/*")) }) { Text("Импорт Zepp") }
             }
+            OutlinedButton(onClick = { exportCsv.launch("weight_backup_${LocalDate.now()}.csv") }) { Text("Резервная копия") }
         }
         Spacer(Modifier.height(24.dp))
     }

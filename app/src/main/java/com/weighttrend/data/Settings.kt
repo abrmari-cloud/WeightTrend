@@ -33,6 +33,10 @@ class Settings(context: Context) {
         get() = prefs.getString("scale_address", null)
         set(v) = prefs.edit().putString("scale_address", v).apply()
 
+    var compositionVersion: Int
+        get() = prefs.getInt("composition_version", 1)
+        set(v) = prefs.edit().putInt("composition_version", v).apply()
+
     var healthConnectEnabled: Boolean
         get() = prefs.getBoolean("hc_enabled", false)
         set(v) = prefs.edit().putBoolean("hc_enabled", v).apply()

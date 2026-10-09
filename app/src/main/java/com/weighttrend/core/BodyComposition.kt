@@ -25,11 +25,11 @@ class BodyComposition(private val profile: UserProfile, private val age: Int) {
         val w = weightKg.toFloat()
         val imp = impedanceOhm.toFloat()
         val fat = bodyFat(w, imp)
-        val musclePct = muscle(w, imp)
         return Result(
             fatPercent = fat.toDouble().round1(),
             waterPercent = water(w, imp).toDouble().round1(),
-            muscleKg = (musclePct * w / 100f).toDouble().round1(),
+            // Same definition as Zepp Life's "muscle": weight − fat mass − bone mass.
+            muscleKg = lbm(w, imp).toDouble().round1(),
             boneKg = boneMass(w, imp).toDouble().round1(),
             visceralFat = visceralFat(w).toDouble().round1().takeIf { it in 1.0..59.0 },
         )
@@ -51,18 +51,6 @@ class BodyComposition(private val profile: UserProfile, private val age: Int) {
         if (sex == 0 && lean >= 84.0f) lean = 120.0f
         else if (sex == 1 && lean >= 93.5f) lean = 120.0f
         return lean
-    }
-
-    /** Skeletal muscle mass as % of body weight (Janssen et al. BIA equation). */
-    private fun muscle(weight: Float, impedance: Float): Float {
-        if (weight <= 0f) return 0f
-        val smmKg = if (impedance > 0f) {
-            val h2OverR = (height * height) / impedance
-            0.401f * h2OverR + 3.825f * sex - 0.071f * age + 5.102f
-        } else {
-            lbm(weight, impedance) * (if (sex == 1) 0.52f else 0.46f)
-        }
-        return ((smmKg / weight) * 100f).coerceIn(10f, 60f)
     }
 
     private fun water(weight: Float, impedance: Float): Float {

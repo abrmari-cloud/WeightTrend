@@ -34,6 +34,7 @@ class CoreTest {
         assertEquals(23.3, male.fatPercent, 1e-9)
         assertEquals(52.6, male.waterPercent, 1e-9)
         assertEquals(3.1, male.boneKg, 1e-9)
+        assertEquals(58.2, male.muscleKg, 1e-9) // = weight − fat − bone, as in Zepp Life
         val female = BodyComposition(UserProfile(false, 1998, 1, 165.0), 28).compute(60.0, 520)
         assertEquals(30.4, female.fatPercent, 1e-9)
         assertEquals(49.7, female.waterPercent, 1e-9)
@@ -82,5 +83,39 @@ class CoreTest {
         val updated = (second as MeasurementAssembler.Action.AddImpedance).updated
         assertEquals(MeasurementAssembler.Action.Ignore,
             MeasurementAssembler.decide(MiScaleFrame.parse(frame(0x22, 480, 12770))!!, now + 9000, listOf(updated), fn))
+    }
+
+    // Real exports start with a byte-order mark.
+    private val zeppCsv = "\uFEFF" + """
+        time,weight,height,bmi,fatRate,bodyWaterRate,boneMass,metabolism,muscleRate,visceralFat
+        2026-10-08 04:38:28+0000,64.4,170.0,22.2,32.968544,47.860462,2.5832634,1181.0,40.584995,6.0
+        2026-10-08 05:00:00+0000,80.1,185.0,23.4,0.0,0.0,0.0,0.0,0.0,0.0
+        2026-10-09 12:43:02+0000,65.5,170.0,22.6,null,null,null,null,null,null
+        2026-10-09 12:44:07+0000,65.1,170.0,22.5,33.54532,47.448643,2.5881531,1189.0,40.673843,6.0
+    """.trimIndent()
+
+    @Test fun zeppKeepsOnlyOwnRowsAndCollapsesRepeats() {
+        val r = ZeppCsv.parse(zeppCsv, heightCm = 170.0)
+        assertEquals(1, r.otherPeopleRows)
+        assertEquals(1, r.collapsedRepeats)
+        assertEquals(2, r.measurements.size)
+        val last = r.measurements.last()
+        assertEquals(65.1, last.weightKg, 1e-9)       // the reading with composition wins
+        assertEquals(33.54532, last.fatPercent!!, 1e-9)
+        assertEquals(6.0, last.visceralFat!!, 1e-9)
+    }
+
+    @Test fun mergeReplacesLibraCopyAndSkipsDuplicates() {
+        val zone = ZoneId.of("Europe/Berlin")
+        val libra = Measurement(id = 7, timestampMs = 1_791_434_308_000L, weightKg = 64.4,
+            source = Measurement.Source.LIBRA, scaleKey = "libra-1")             // 2026-10-08T04:38:28Z
+        val zepp = ZeppCsv.parse(zeppCsv, 170.0).measurements
+        val ops = HistoryMerge.plan(listOf(libra), zepp + zepp, zone)
+        val replaced = ops.filterIsInstance<HistoryMerge.Op.Replace>()
+        assertEquals(1, replaced.size)
+        assertEquals(7L, replaced[0].updated.id)
+        assertEquals(Measurement.Source.ZEPP, replaced[0].updated.source)
+        assertEquals(1, ops.count { it is HistoryMerge.Op.Insert })
+        assertEquals(2, ops.count { it is HistoryMerge.Op.Skip })
     }
 }

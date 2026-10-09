@@ -67,6 +67,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     private val liveScan = ScaleScanner.LiveScan(app) { onScanResult(it) }
 
+    init {
+        viewModelScope.launch(Dispatchers.IO) { repo.migrateIfNeeded() }
+    }
+
     val hcAvailable: Boolean get() = HealthConnectSync.isAvailable(getApplication<Application>())
 
     // ---------- Bluetooth ----------
@@ -166,11 +170,20 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     // ---------- Data ----------
 
-    fun importLibra(uri: Uri) = viewModelScope.launch(Dispatchers.IO) {
-        val text = readText(uri) ?: run { _message.value = "Не удалось прочитать файл"; return@launch }
-        val (added, total) = repo.importLibra(text)
-        _message.value = "Импорт из Libra: добавлено $added из $total"
-    }
+    fun importLibra(uri: Uri) = importHistory(uri, "Libra") { repo.importLibra(it) }
+    fun importZepp(uri: Uri) = importHistory(uri, "Zepp Life") { repo.importZepp(it) }
+
+    private fun importHistory(uri: Uri, name: String, block: (String) -> Repository.ImportResult) =
+        viewModelScope.launch(Dispatchers.IO) {
+            val text = readText(uri) ?: run { _message.value = "Не удалось прочитать файл"; return@launch }
+            val r = runCatching { block(text) }.getOrElse { _message.value = "Импорт $name: ${it.message}"; return@launch }
+            _message.value = buildString {
+                append("Импорт $name: новых ${r.added}")
+                if (r.enriched > 0) append(", дополнено ${r.enriched}")
+                if (r.duplicates > 0) append(", уже было ${r.duplicates}")
+                if (r.note.isNotEmpty()) append("; ").append(r.note)
+            }
+        }
 
     fun exportFit(uri: Uri, onlyNew: Boolean) = viewModelScope.launch(Dispatchers.IO) {
         val list = repo.measurements.value.filter { !onlyNew || !it.garminExported }
