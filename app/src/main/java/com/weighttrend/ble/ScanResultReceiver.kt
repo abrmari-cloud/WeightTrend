@@ -17,6 +17,7 @@ import com.weighttrend.R
 import com.weighttrend.WeightTrendApp
 import com.weighttrend.core.Measurement
 import com.weighttrend.data.Repository
+import com.weighttrend.garmin.GarminSync
 import com.weighttrend.hc.HealthConnectSync
 import com.weighttrend.ui.MainActivity
 import com.weighttrend.ui.Format
@@ -50,6 +51,7 @@ class ScanResultReceiver : BroadcastReceiver() {
                 }
                 saved?.let { m ->
                     notify(app, m)
+                    GarminSync.schedule(app)
                     // Give the scale a few seconds to send the impedance reading,
                     // then push both to Health Connect in one go.
                     delay(5_000)

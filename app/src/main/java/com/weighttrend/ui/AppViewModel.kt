@@ -13,6 +13,8 @@ import com.weighttrend.core.MiScaleFrame
 import com.weighttrend.core.Trend
 import com.weighttrend.core.UserProfile
 import com.weighttrend.data.Repository
+import com.weighttrend.garmin.GarminStore
+import com.weighttrend.garmin.GarminSync
 import com.weighttrend.hc.HealthConnectSync
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -73,12 +75,61 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     val hcAvailable: Boolean get() = HealthConnectSync.isAvailable(getApplication<Application>())
 
+    // ---------- Garmin ----------
+
+    data class GarminState(
+        val connected: Boolean,
+        val needsLogin: Boolean,
+        val status: String?,
+        val lastSuccessMs: Long,
+        val pending: Int,
+    )
+
+    private val garminStore = GarminStore(app)
+    private val _garmin = MutableStateFlow(readGarmin())
+    val garmin: StateFlow<GarminState> = _garmin.asStateFlow()
+
+    private fun readGarmin() = GarminState(
+        connected = garminStore.isConnected,
+        needsLogin = garminStore.needsLogin,
+        status = garminStore.lastStatus,
+        lastSuccessMs = garminStore.lastSuccessMs,
+        pending = GarminSync.pending(repo).size,
+    )
+
+    fun refreshGarmin() { _garmin.value = readGarmin() }
+
+    init {
+        // Declared after the Garmin state: init blocks run in source order.
+        viewModelScope.launch { repo.measurements.collect { refreshGarmin() } }
+    }
+
+    fun garminSyncNow() = viewModelScope.launch {
+        _message.value = when (val o = GarminSync.syncNow(getApplication<Application>(), repo)) {
+            is GarminSync.Outcome.Sent -> "Отправлено в Garmin: ${o.count}"
+            GarminSync.Outcome.NothingToSend -> "Garmin: новых взвешиваний нет"
+            GarminSync.Outcome.NotConnected -> "Garmin не подключён"
+            GarminSync.Outcome.NeedsLogin -> "Garmin: нужно войти заново"
+            is GarminSync.Outcome.NetworkError -> "Garmin: нет связи (${o.message})"
+            is GarminSync.Outcome.Failed -> "Garmin: ${o.message}"
+        }
+        refreshGarmin()
+    }
+
+    fun garminLogout() {
+        garminStore.clear()
+        android.webkit.CookieManager.getInstance().removeAllCookies(null)
+        refreshGarmin()
+    }
+
     // ---------- Bluetooth ----------
 
     fun onForeground() {
         liveScan.start()
         ScaleScanner.ensureBackgroundScan(getApplication<Application>())
         refreshHealthConnect(syncAfter = true)
+        refreshGarmin()
+        if (_garmin.value.connected && _garmin.value.pending > 0) GarminSync.schedule(getApplication<Application>(), 10)
     }
 
     fun onBackground() = liveScan.stop()
@@ -202,6 +253,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun addManual(weightKg: Double) = viewModelScope.launch(Dispatchers.IO) {
         repo.addManual(weightKg, System.currentTimeMillis())
         HealthConnectSync.trySync(getApplication<Application>(), repo)
+        GarminSync.schedule(getApplication<Application>(), 10)
     }
 
     fun delete(id: Long) = viewModelScope.launch(Dispatchers.IO) { repo.delete(id) }

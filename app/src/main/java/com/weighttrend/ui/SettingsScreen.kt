@@ -39,6 +39,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.health.connect.client.PermissionController
 import com.weighttrend.core.UserProfile
+import com.weighttrend.garmin.GarminLoginActivity
 import com.weighttrend.hc.HealthConnectSync
 import java.time.LocalDate
 
@@ -50,6 +51,7 @@ fun SettingsScreen(vm: AppViewModel, modifier: Modifier = Modifier) {
     val found by vm.found.collectAsStateCompat()
     val hcEnabled by vm.hcEnabled.collectAsStateCompat()
     val hcPermitted by vm.hcPermitted.collectAsStateCompat()
+    val garmin by vm.garmin.collectAsStateCompat()
 
     val btPermissions = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
         vm.restartScans()
@@ -147,9 +149,48 @@ fun SettingsScreen(vm: AppViewModel, modifier: Modifier = Modifier) {
         }
 
         // ---------- Garmin ----------
-        Section("Garmin", "Пока через файл: сохраните FIT и загрузите его на connect.garmin.com/app/import-data. Автоматическая отправка — следующий этап.") {
+        Section(
+            "Garmin Connect",
+            "Новые взвешивания уходят в Garmin сами, примерно через полторы минуты после взвешивания. " +
+                "Вход — на странице Garmin, пароль приложению не передаётся. Это неофициальный способ: " +
+                "если Garmin его поменяет, отправка остановится, а взвешивания останутся в приложении.",
+        ) {
+            if (!garmin.connected || garmin.needsLogin) {
+                if (garmin.needsLogin) {
+                    Text("Garmin не принял сохранённый вход. Войдите заново — накопленные взвешивания отправятся.",
+                        style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)
+                }
+                FilledTonalButton(onClick = {
+                    context.startActivity(Intent(context, GarminLoginActivity::class.java))
+                }) { Text("Войти в Garmin") }
+                if (!garmin.connected) {
+                    Text(
+                        "После первого входа автоматически отправляются только новые взвешивания. " +
+                            "Историю загрузите один раз файлом (кнопка «Всё → FIT» ниже).",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            } else {
+                Text(
+                    buildString {
+                        append("Подключено")
+                        if (garmin.lastSuccessMs > 0) append(" · последняя отправка: ").append(Format.dateTime(garmin.lastSuccessMs))
+                        append(" · ждут отправки: ").append(garmin.pending)
+                    },
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                garmin.status?.let {
+                    Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilledTonalButton(onClick = { vm.garminSyncNow() }) { Text("Отправить сейчас") }
+                    OutlinedButton(onClick = { vm.garminLogout() }) { Text("Выйти") }
+                }
+            }
+            Text("Файлом:", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                FilledTonalButton(onClick = { exportNewFit.launch("weight_new_${LocalDate.now()}.fit") }) { Text("Новые → FIT") }
+                OutlinedButton(onClick = { exportNewFit.launch("weight_new_${LocalDate.now()}.fit") }) { Text("Новые → FIT") }
                 OutlinedButton(onClick = { exportAllFit.launch("weight_all_${LocalDate.now()}.fit") }) { Text("Всё → FIT") }
             }
         }

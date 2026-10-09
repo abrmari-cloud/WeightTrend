@@ -1,5 +1,7 @@
 package com.weighttrend.ui
 
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -28,7 +30,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.weighttrend.core.BodyComposition
+import com.weighttrend.core.Metric
 import com.weighttrend.core.UserProfile
 import kotlinx.coroutines.delay
 
@@ -46,7 +48,11 @@ fun HomeScreen(
     modifier: Modifier = Modifier,
 ) {
     var range by rememberSaveable { mutableStateOf(Range.M3) }
-    var selected by remember { mutableStateOf<TrendPoint?>(null) }
+    var metric by rememberSaveable { mutableStateOf(Metric.WEIGHT) }
+    var selected by remember { mutableStateOf<Metric.Point?>(null) }
+
+    val measurements = remember(points) { points.map { it.m } }
+    val series = remember(measurements, metric, profile) { metric.series(measurements, profile) }
 
     Column(
         modifier
@@ -61,10 +67,9 @@ fun HomeScreen(
 
         LiveCard(live)
 
-        val last = points.lastOrNull()
-        if (last == null) {
+        if (measurements.isEmpty()) {
             Text(
-                "Пока нет взвешиваний. Встаньте на весы или импортируйте историю из Libra в настройках.",
+                "Пока нет взвешиваний. Встаньте на весы или импортируйте историю в настройках.",
                 style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(top = 24.dp),
@@ -72,66 +77,99 @@ fun HomeScreen(
             return@Column
         }
 
-        // ----- headline -----
-        Column {
-            Text("Тренд", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Row(verticalAlignment = Alignment.Bottom) {
-                Text(Format.num(last.trend), fontSize = 64.sp, fontWeight = FontWeight.SemiBold, lineHeight = 64.sp)
-                Text(" кг", style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(bottom = 10.dp))
-            }
-            Text(
-                "Последнее: ${Format.kg(last.m.weightKg)} · ${Format.dateTime(last.m.timestampMs)}",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            DeltaCard("за неделю", trendDelta(points, 7), Modifier.weight(1f))
-            DeltaCard("за месяц", trendDelta(points, 30), Modifier.weight(1f))
-            DeltaCard("за год", trendDelta(points, 365), Modifier.weight(1f))
-        }
-
-        // ----- chart -----
-        Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)) {
-            Column(Modifier.padding(12.dp)) {
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Range.entries.forEach { r ->
-                        FilterChip(selected = range == r, onClick = { range = r; selected = null }, label = { Text(r.label) })
-                    }
-                }
-                Spacer(Modifier.height(8.dp))
-                val toMs = System.currentTimeMillis()
-                val fromMs = range.days?.let { toMs - it * 86_400_000L } ?: points.first().m.timestampMs
-                TrendChart(points, fromMs, toMs, selected, { selected = it })
-                val s = selected
-                Text(
-                    if (s != null) "${Format.dateTime(s.m.timestampMs)}: ${Format.kg(s.m.weightKg)}, тренд ${Format.num(s.trend)}" +
-                        (s.m.fatPercent?.let { ", жир ${Format.pct(it)}" } ?: "")
-                    else "Точки — взвешивания, линия — тренд. Нажмите на график, чтобы увидеть значение.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(top = 6.dp),
+        // ----- metric selector -----
+        Row(
+            Modifier.horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Metric.entries.forEach { mt ->
+                FilterChip(
+                    selected = metric == mt,
+                    onClick = { metric = mt; selected = null },
+                    label = { Text(mt.label) },
                 )
             }
         }
 
-        // ----- body composition -----
-        val withComp = points.lastOrNull { it.m.fatPercent != null }
+        val last = series.lastOrNull()
+        if (last == null) {
+            Text(
+                if (metric == Metric.BMI) "Для ИМТ укажите рост в настройках профиля."
+                else "Пока нет взвешиваний с показателем «${metric.label}». Он измеряется, если вставать на весы босиком.",
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        } else {
+            // ----- headline -----
+            Column {
+                Text("${metric.label} · тренд", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Row(verticalAlignment = Alignment.Bottom) {
+                    Text(Format.num(last.trend, metric.digits), fontSize = 64.sp, fontWeight = FontWeight.SemiBold, lineHeight = 64.sp)
+                    if (metric.unit.isNotEmpty()) {
+                        Text(" ${metric.unit}", style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(bottom = 10.dp))
+                    }
+                }
+                Text(
+                    "Последнее: ${Format.value(last.value, metric)} · ${Format.dateTime(last.m.timestampMs)}",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                DeltaCard("за неделю", Metric.delta(series, 7), metric, Modifier.weight(1f))
+                DeltaCard("за месяц", Metric.delta(series, 30), metric, Modifier.weight(1f))
+                DeltaCard("за год", Metric.delta(series, 365), metric, Modifier.weight(1f))
+            }
+
+            // ----- chart -----
+            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)) {
+                Column(Modifier.padding(12.dp)) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Range.entries.forEach { r ->
+                            FilterChip(selected = range == r, onClick = { range = r; selected = null }, label = { Text(r.label) })
+                        }
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    val toMs = System.currentTimeMillis()
+                    val fromMs = range.days?.let { toMs - it * 86_400_000L } ?: series.first().m.timestampMs
+                    TrendChart(series, metric, fromMs, toMs, selected, { selected = it })
+                    val s = selected
+                    Text(
+                        if (s != null) "${Format.dateTime(s.m.timestampMs)}: ${Format.value(s.value, metric)}, " +
+                            "тренд ${Format.num(s.trend, metric.digits)}"
+                        else "Точки — взвешивания, линия — тренд. Нажмите на график, чтобы увидеть значение.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 6.dp),
+                    )
+                }
+            }
+        }
+
+        // ----- body composition (tap a value to chart it) -----
+        val withComp = measurements.lastOrNull { it.fatPercent != null }
         if (withComp != null) {
             Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Состав тела · ${Format.dateTime(withComp.m.timestampMs)}", style = MaterialTheme.typography.titleSmall)
+                    Text("Состав тела · ${Format.dateTime(withComp.timestampMs)}", style = MaterialTheme.typography.titleSmall)
                     Row(Modifier.fillMaxWidth()) {
-                        Metric("Жир", withComp.m.fatPercent?.let(Format::pct), Modifier.weight(1f))
-                        Metric("Вода", withComp.m.waterPercent?.let(Format::pct), Modifier.weight(1f))
+                        MetricValue("Жир", withComp.fatPercent?.let(Format::pct), Modifier.weight(1f)) { metric = Metric.FAT; selected = null }
+                        MetricValue("Вода", withComp.waterPercent?.let(Format::pct), Modifier.weight(1f)) { metric = Metric.WATER; selected = null }
                     }
                     Row(Modifier.fillMaxWidth()) {
-                        Metric("Мышцы", withComp.m.muscleKg?.let(Format::kg), Modifier.weight(1f))
-                        Metric("Кости", withComp.m.boneKg?.let(Format::kg), Modifier.weight(1f))
+                        MetricValue(
+                            "Мышцы",
+                            withComp.muscleKg?.let { "${Format.kg(it)} · ${Format.pct(it / withComp.weightKg * 100)}" },
+                            Modifier.weight(1f),
+                        ) { metric = Metric.MUSCLE; selected = null }
+                        MetricValue("Кости", withComp.boneKg?.let(Format::kg), Modifier.weight(1f), null)
                     }
-                    if (profile != null) {
-                        Metric("ИМТ", Format.num(BodyComposition(profile, 30).bmi(last.m.weightKg)), Modifier)
+                    Row(Modifier.fillMaxWidth()) {
+                        MetricValue("ИМТ", Metric.BMI.of(withComp, profile)?.let { Format.num(it) }, Modifier.weight(1f)) {
+                            metric = Metric.BMI; selected = null
+                        }
+                        MetricValue("Висцеральный жир", withComp.visceralFat?.let { Format.num(it, 0) }, Modifier.weight(1f), null)
                     }
                 }
             }
@@ -140,28 +178,24 @@ fun HomeScreen(
     }
 }
 
-/** Change of the trend over [days]: now vs the trend at the last point before that. */
-private fun trendDelta(points: List<TrendPoint>, days: Long): Double? {
-    val last = points.lastOrNull() ?: return null
-    val cutoff = last.m.timestampMs - days * 86_400_000L
-    val then = points.lastOrNull { it.m.timestampMs <= cutoff } ?: return null
-    return last.trend - then.trend
-}
-
 @Composable
-private fun DeltaCard(label: String, delta: Double?, modifier: Modifier) {
+private fun DeltaCard(label: String, delta: Double?, metric: Metric, modifier: Modifier) {
     Card(modifier, colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)) {
         Column(Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
-            Text(delta?.let { Format.signed(it) + " кг" } ?: "—", style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.onSecondaryContainer)
+            Text(
+                delta?.let { Format.signed(it) + if (metric.unit.isNotEmpty()) " ${metric.unit}" else "" } ?: "—",
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onSecondaryContainer,
+            )
             Text(label, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSecondaryContainer)
         }
     }
 }
 
 @Composable
-private fun Metric(label: String, value: String?, modifier: Modifier) {
-    Column(modifier) {
+private fun MetricValue(label: String, value: String?, modifier: Modifier, onClick: (() -> Unit)?) {
+    val m = if (onClick != null && value != null) modifier.clickable(onClick = onClick) else modifier
+    Column(m) {
         Text(label, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Text(value ?: "—", style = MaterialTheme.typography.titleLarge)
     }

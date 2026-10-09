@@ -16,6 +16,9 @@ object Format {
     fun num(v: Double, digits: Int = 1): String = String.format(RU, "%.${digits}f", v)
     fun kg(v: Double): String = num(v) + " кг"
     fun pct(v: Double): String = num(v) + " %"
+    fun value(v: Double, metric: com.weighttrend.core.Metric): String =
+        num(v, metric.digits) + if (metric.unit.isNotEmpty()) " ${metric.unit}" else ""
+
     fun signed(v: Double): String = (if (v > 0.05) "+" else if (v < -0.05) "−" else "±") + num(kotlin.math.abs(v))
 
     fun date(ms: Long): String {

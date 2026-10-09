@@ -118,4 +118,24 @@ class CoreTest {
         assertEquals(1, ops.count { it is HistoryMerge.Op.Insert })
         assertEquals(2, ops.count { it is HistoryMerge.Op.Skip })
     }
+
+    @Test fun metricSeriesSkipsMissingValuesAndComputesBmi() {
+        val p = UserProfile(false, 1982, 7, 170.0)
+        val a = Measurement(timestampMs = 0L, weightKg = 64.4, fatPercent = 33.0, muscleKg = 40.6)
+        val b = Measurement(timestampMs = 86_400_000L, weightKg = 64.0)
+        assertEquals(1, Metric.FAT.series(listOf(a, b), p).size)
+        assertEquals(2, Metric.WEIGHT.series(listOf(a, b), p).size)
+        assertEquals(22.28, Metric.BMI.of(a, p)!!, 0.01)
+        assertEquals(63.04, Metric.MUSCLE.of(a, p)!!, 0.01)
+        assertNull(Metric.BMI.of(a, null))
+    }
+
+    @Test fun timeAxisUsesRoundDates() {
+        val zone = ZoneId.of("Europe/Berlin")
+        val to = java.time.ZonedDateTime.of(2026, 10, 9, 15, 0, 0, 0, zone).toInstant().toEpochMilli()
+        val month = TimeAxis.ticks(to - 30 * 86_400_000L, to, zone, 5).map { it.label }
+        assertEquals(listOf("14 сент", "21 сент", "28 сент", "5 окт"), month)
+        val year = TimeAxis.ticks(to - 365 * 86_400_000L, to, zone, 4).map { it.label }
+        assertEquals(listOf("янв 26", "апр", "июль", "окт"), year)
+    }
 }

@@ -19,23 +19,27 @@ import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import java.time.Instant
+import com.weighttrend.core.Metric
+import com.weighttrend.core.TimeAxis
 import java.time.ZoneId
+import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.floor
 import kotlin.math.max
 import kotlin.math.min
 
 /**
- * Weigh-ins as dots, the trend as a line (Libra style). Tap to select a point.
+ * One metric over time: measurements as dots, the trend as a line (Libra style).
+ * Tap to select the nearest point.
  */
 @Composable
 fun TrendChart(
-    points: List<TrendPoint>,
+    points: List<Metric.Point>,
+    metric: Metric,
     fromMs: Long,
     toMs: Long,
-    selected: TrendPoint?,
-    onSelect: (TrendPoint?) -> Unit,
+    selected: Metric.Point?,
+    onSelect: (Metric.Point?) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val colors = MaterialTheme.colorScheme
@@ -54,7 +58,7 @@ fun TrendChart(
                     val w = size.width - left
                     val span = (toMs - fromMs).coerceAtLeast(1L)
                     val nearest = visible.minByOrNull {
-                        kotlin.math.abs(left + w * (it.m.timestampMs - fromMs) / span.toFloat() - tap.x)
+                        abs(left + w * (it.m.timestampMs - fromMs) / span.toFloat() - tap.x)
                     }
                     onSelect(if (nearest == selected) null else nearest)
                 }
@@ -71,41 +75,45 @@ fun TrendChart(
         val w = size.width - left
         val h = size.height - bottom - top
 
-        var lo = visible.minOf { min(it.m.weightKg, it.trend) }
-        var hi = visible.maxOf { max(it.m.weightKg, it.trend) }
-        lo = floor(lo * 2 - 1) / 2
-        hi = ceil(hi * 2 + 1) / 2
-        val step = when {
-            hi - lo > 12 -> 2.0
-            hi - lo > 5 -> 1.0
-            else -> 0.5
-        }
+        // y range with a little padding, snapped to the grid step
+        val rawLo = visible.minOf { min(it.value, it.trend) }
+        val rawHi = visible.maxOf { max(it.value, it.trend) }
+        val step = niceStep((rawHi - rawLo).coerceAtLeast(0.5))
+        val lo = floor((rawLo - step / 2) / step) * step
+        val hi = ceil((rawHi + step / 2) / step) * step
         val span = (toMs - fromMs).coerceAtLeast(1L).toFloat()
         fun x(ms: Long) = left + w * (ms - fromMs) / span
-        fun y(kg: Double) = top + h * (1f - ((kg - lo) / (hi - lo)).toFloat())
+        fun y(v: Double) = top + h * (1f - ((v - lo) / (hi - lo)).toFloat())
 
-        // horizontal grid + labels
-        var g = ceil(lo / step) * step
-        while (g <= hi) {
+        // horizontal grid + value labels
+        val gridEffect = PathEffect.dashPathEffect(floatArrayOf(6f, 6f))
+        val digits = if (step < 1.0) 1 else 0
+        var g = lo
+        while (g <= hi + 1e-9) {
             val yy = y(g)
-            drawLine(colors.outlineVariant, Offset(left, yy), Offset(size.width, yy), strokeWidth = 1f,
-                pathEffect = PathEffect.dashPathEffect(floatArrayOf(6f, 6f)))
-            val t = measurer.measure(Format.num(g), labelStyle)
+            drawLine(colors.outlineVariant, Offset(left, yy), Offset(size.width, yy), strokeWidth = 1f, pathEffect = gridEffect)
+            val t = measurer.measure(Format.num(g, digits), labelStyle)
             drawText(t, topLeft = Offset(left - t.size.width - 6.dp.toPx(), yy - t.size.height / 2f))
             g += step
         }
 
-        // date labels: start and end of the visible range
-        val zone = ZoneId.systemDefault()
-        listOf(fromMs, toMs).forEachIndexed { i, ms ->
-            val t = measurer.measure(Format.shortDate(Instant.ofEpochMilli(ms).atZone(zone).toLocalDate()), labelStyle)
-            val xx = if (i == 0) left else size.width - t.size.width
-            drawText(t, topLeft = Offset(xx, size.height - t.size.height))
+        // date ticks along the time axis
+        val maxTicks = (w / 56.dp.toPx()).toInt().coerceIn(2, 8)
+        var lastLabelRight = Float.NEGATIVE_INFINITY
+        for (tick in TimeAxis.ticks(fromMs, toMs, ZoneId.systemDefault(), maxTicks)) {
+            val xx = x(tick.epochMs)
+            drawLine(colors.outlineVariant.copy(alpha = 0.5f), Offset(xx, top), Offset(xx, top + h), strokeWidth = 1f)
+            val t = measurer.measure(tick.label, labelStyle)
+            val lx = (xx - t.size.width / 2f).coerceIn(left, size.width - t.size.width)
+            if (lx > lastLabelRight + 4.dp.toPx()) {
+                drawText(t, topLeft = Offset(lx, size.height - t.size.height))
+                lastLabelRight = lx + t.size.width
+            }
         }
 
-        // weigh-ins
+        // measurements
         for (p in visible) {
-            drawCircle(colors.primary.copy(alpha = 0.35f), radius = 3.dp.toPx(), center = Offset(x(p.m.timestampMs), y(p.m.weightKg)))
+            drawCircle(colors.primary.copy(alpha = 0.35f), radius = 3.dp.toPx(), center = Offset(x(p.m.timestampMs), y(p.value)))
         }
 
         // trend line
@@ -120,9 +128,15 @@ fun TrendChart(
         selected?.takeIf { it in visible }?.let { p ->
             val xx = x(p.m.timestampMs)
             drawLine(colors.tertiary, Offset(xx, top), Offset(xx, top + h), strokeWidth = 1.5f)
-            drawCircle(colors.tertiary, radius = 5.dp.toPx(), center = Offset(xx, y(p.m.weightKg)))
+            drawCircle(colors.tertiary, radius = 5.dp.toPx(), center = Offset(xx, y(p.value)))
             drawCircle(colors.surface, radius = 4.dp.toPx(), center = Offset(xx, y(p.trend)))
             drawCircle(colors.primary, radius = 4.dp.toPx(), center = Offset(xx, y(p.trend)), style = Stroke(2.dp.toPx()))
         }
     }
+}
+
+/** Grid step giving roughly 4–6 horizontal lines. */
+private fun niceStep(range: Double): Double {
+    val candidates = doubleArrayOf(0.1, 0.2, 0.5, 1.0, 2.0, 5.0, 10.0, 20.0)
+    return candidates.firstOrNull { range / it <= 6 } ?: 50.0
 }
