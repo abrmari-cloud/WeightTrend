@@ -208,7 +208,43 @@ class CoreTest {
         val s = WeeklyAnalysis.split(weeks) { it.avgSteps }!!
         assertEquals(-300.0, s.difference, 1e-9)
         assertEquals(4, s.highWeeks)
+        assertTrue(s.significant)
+        assertFalse(s.narrowRange)
     }
 
     private fun LocalDateOf(y: Int, m: Int, d: Int) = java.time.LocalDate.of(y, m, d)
+
+    // ---------------------------------------------------------------- 0.5
+
+    @Test fun weeklyBalanceUsesNeighbouringWeekAverages() {
+        // Mondays 7, 14, 21 Sep 2026 (08:00), weights averaging 64.0, 64.3 (noisy), 64.2
+        fun at(d: Int, kg: Double) = java.time.ZonedDateTime.of(2026, 9, d, 8, 0, 0, 0, zone).toInstant().toEpochMilli() to kg
+        val w = listOf(at(7, 63.8), at(9, 64.2), at(14, 64.9), at(16, 63.7), at(21, 64.0), at(23, 64.4))
+        val b = WeeklyAnalysis.balances(w, zone)
+        val mid = b.getValue(LocalDateOf(2026, 9, 14))
+        assertEquals((64.2 - 64.0) / 14 * 7700, mid, 1e-6)   // the noisy middle week does not dominate
+        assertNull(b[LocalDateOf(2026, 9, 7)])                // no week before
+    }
+
+    @Test fun noisyDifferenceIsNotSignificant() {
+        val bal = listOf(604.0, -326.0, 776.0, -1066.0, 300.0, -200.0, 500.0, -400.0)
+        val weeks = bal.mapIndexed { i, b ->
+            WeeklyAnalysis.Week(LocalDateOf(2026, 8, 3).plusWeeks(i.toLong()), avgSteps = 8600.0 + i * 200, balanceKcal = b)
+        }
+        val s = WeeklyAnalysis.split(weeks) { it.avgSteps }!!
+        assertFalse(s.significant)
+        assertTrue(s.narrowRange)   // 8 600–10 000 steps
+    }
+
+    @Test fun reportContainsKeySections() {
+        val p = UserProfile(false, 1982, 7, 170.0)
+        val ms = (0 until 40).map { i ->
+            Measurement(timestampMs = now - (39 - i) * day, weightKg = 64.0 + i * 0.01, fatPercent = 33.0, waterPercent = 47.9,
+                impedanceOhm = 570)
+        }
+        val text = ConsultationReport.build(ms, p, Goal(59.5, null), emptyList(), null, now, zone)
+        assertTrue(text, text.contains("Профиль: женщина, 44 года, рост 170 см."))
+        assertTrue(text, text.contains("Энергобаланс за 4 недели"))
+        assertTrue(text, text.contains("базовый обмен (Катч–Макардл)"))
+    }
 }

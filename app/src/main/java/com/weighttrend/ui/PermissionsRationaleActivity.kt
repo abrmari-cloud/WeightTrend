@@ -23,7 +23,8 @@ class PermissionsRationaleActivity : ComponentActivity() {
                         Text("Как «Вес» использует данные", style = MaterialTheme.typography.titleLarge)
                         Text(
                             "Приложение записывает в Health Connect взвешивания с ваших весов: вес, процент жира и костную массу. " +
-                                "Из Health Connect оно читает только шаги и сон, чтобы сравнить недели по активности и балансу энергии. " +
+                                "Из Health Connect оно читает шаги, сон, активные калории, тренировки и питание — чтобы сравнить недели " +
+                                "по активности и балансу энергии и собрать отчёт, которым вы делитесь сами. " +
                                 "Эти данные остаются на телефоне и никуда не отправляются.",
                             style = MaterialTheme.typography.bodyLarge,
                             modifier = Modifier.padding(top = 12.dp),

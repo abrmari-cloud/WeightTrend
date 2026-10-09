@@ -14,6 +14,8 @@ object Format {
     private val time = DateTimeFormatter.ofPattern("HH:mm", RU)
 
     fun num(v: Double, digits: Int = 1): String = String.format(RU, "%.${digits}f", v)
+    /** Whole number with Russian digit grouping: 8 597. */
+    fun int(v: Double): String = String.format(RU, "%,d", Math.round(v))
     fun kg(v: Double): String = num(v) + " кг"
     fun pct(v: Double): String = num(v) + " %"
     fun value(v: Double, metric: com.weighttrend.core.Metric): String =

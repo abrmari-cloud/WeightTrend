@@ -234,6 +234,24 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /** Plain-text summary for a nutrition consultation (uses Health Connect data if loaded). */
+    fun buildReport(): String {
+        val zone = java.time.ZoneId.systemDefault()
+        val r = _analysis.value.result
+        val ms = repo.measurements.value
+        val weeks = if (r != null) com.weighttrend.core.WeeklyAnalysis.weeks(
+            ms.map { it.timestampMs to it.weightKg }, r.steps, r.sleep, zone, r.extra,
+        ) else com.weighttrend.core.WeeklyAnalysis.weeks(ms.map { it.timestampMs to it.weightKg }, emptyMap(), emptyMap(), zone)
+        val note = when {
+            r == null -> "Шаги, сон, тренировки и еда не включены: нет доступа к Health Connect."
+            r.missingOptional.isNotEmpty() -> "Нет доступа к: ${r.missingOptional.joinToString(", ")}."
+            else -> null
+        }
+        return com.weighttrend.core.ConsultationReport.build(
+            ms, _profile.value, _goal.value, weeks, note, System.currentTimeMillis(), zone,
+        )
+    }
+
     // ---------- Health Connect ----------
 
     fun setHealthConnectEnabled(on: Boolean) {
