@@ -38,6 +38,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.health.connect.client.PermissionController
+import com.weighttrend.core.Coach
+import com.weighttrend.core.Goal
 import com.weighttrend.core.UserProfile
 import com.weighttrend.garmin.GarminLoginActivity
 import com.weighttrend.hc.HealthConnectSync
@@ -47,6 +49,8 @@ import java.time.LocalDate
 fun SettingsScreen(vm: AppViewModel, modifier: Modifier = Modifier) {
     val context = LocalContext.current
     val profile by vm.profile.collectAsStateCompat()
+    val goal by vm.goal.collectAsStateCompat()
+    val points by vm.points.collectAsStateCompat()
     val scale by vm.scaleAddress.collectAsStateCompat()
     val found by vm.found.collectAsStateCompat()
     val hcEnabled by vm.hcEnabled.collectAsStateCompat()
@@ -85,6 +89,10 @@ fun SettingsScreen(vm: AppViewModel, modifier: Modifier = Modifier) {
         // ---------- Profile ----------
         Section("Профиль", "Нужен для расчёта состава тела по импедансу.") {
             ProfileForm(profile) { vm.saveProfile(it) }
+        }
+
+        Section("Цель", "Целевой вес по тренду и, по желанию, дата. Без даты считаю по спокойному темпу 0,5 % веса в неделю.") {
+            GoalForm(goal, points.lastOrNull()?.trend) { vm.saveGoal(it) }
         }
 
         // ---------- Scale ----------
@@ -255,3 +263,48 @@ private fun ProfileForm(current: UserProfile?, onSave: (UserProfile) -> Unit) {
         onSave(UserProfile(isMale = male, birthYear = y!!, birthMonth = m!!, heightCm = h!!))
     }) { Text("Сохранить") }
 }
+
+@Composable
+private fun GoalForm(current: Goal?, trendKg: Double?, onSave: (Goal?) -> Unit) {
+    var weight by remember(current) { mutableStateOf(current?.targetKg?.let { Format.num(it) } ?: "") }
+    var date by remember(current) { mutableStateOf(current?.targetDate?.let { DATE_INPUT.format(it) } ?: "") }
+
+    val w = weight.replace(',', '.').toDoubleOrNull()?.takeIf { it in 30.0..250.0 }
+    val d = date.trim().takeIf { it.isNotEmpty() }?.let { runCatching { LocalDate.parse(it, DATE_INPUT) }.getOrNull() }
+    val dateOk = date.isBlank() || (d != null && d.isAfter(LocalDate.now()))
+
+    OutlinedTextField(
+        value = weight, onValueChange = { weight = it }, label = { Text("Целевой вес, кг") }, singleLine = true,
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), modifier = Modifier.fillMaxWidth(),
+    )
+    OutlinedTextField(
+        value = date, onValueChange = { date = it }, label = { Text("Дата (дд.мм.гггг), необязательно") }, singleLine = true,
+        isError = !dateOk,
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth(),
+    )
+    if (w != null && trendKg != null && dateOk) {
+        val g = Goal(w, d)
+        val today = LocalDate.now()
+        val pace = Coach.requiredPacePct(trendKg, g, today)
+        val kcal = Coach.required(trendKg, g, today)
+        val text = buildString {
+            append("Сейчас тренд ${Format.kg(trendKg)}. ")
+            if (kotlin.math.abs(w - trendKg) <= 0.3) append("Вы уже у цели.")
+            else {
+                append("Нужно ${if (kcal < 0) "−" else "+"}${kotlin.math.abs(kcal).toInt()} ккал в день, темп ${Format.num(pace)} % веса в неделю.")
+                if (pace > Coach.MAX_PACE_PCT) {
+                    append(" Это быстрее безопасного (${Format.num(Coach.MAX_PACE_PCT)} %); реалистичная дата — ")
+                    append(DATE_INPUT.format(Coach.earliestSafeDate(trendKg, g, today))).append(".")
+                }
+            }
+        }
+        Text(text, style = MaterialTheme.typography.bodySmall,
+            color = if (pace > Coach.MAX_PACE_PCT) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Button(enabled = w != null && dateOk, onClick = { onSave(Goal(w!!, d)) }) { Text("Сохранить цель") }
+        if (current != null) OutlinedButton(onClick = { onSave(null) }) { Text("Убрать") }
+    }
+}
+
+private val DATE_INPUT: java.time.format.DateTimeFormatter = java.time.format.DateTimeFormatter.ofPattern("dd.MM.yyyy")

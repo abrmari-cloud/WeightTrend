@@ -81,7 +81,7 @@ class Repository private constructor(context: Context) {
         val parsed = ZeppCsv.parse(csv, settings.profile?.heightCm)
         val note = if (parsed.otherPeopleRows > 0)
             "пропущено чужих взвешиваний: ${parsed.otherPeopleRows}" else ""
-        mergeIn(parsed.measurements).copy(note = note)
+        mergeIn(parsed.measurements).copy(note = note).also { backfillImpedance() }
     }
 
     fun addManual(weightKg: Double, timestampMs: Long) = synchronized(lock) {
@@ -102,23 +102,47 @@ class Repository private constructor(context: Context) {
     }
 
     /**
-     * Version 0.2 switched muscle mass to Zepp's definition; recompute readings
-     * saved by 0.1 once.
+     * One-time data upgrades:
+     *  v2 (0.2): muscle mass uses Zepp's definition — recompute scale readings.
+     *  v3 (0.4): impedance recovered for imported Zepp history (for the impedance chart).
      */
     fun migrateIfNeeded() = synchronized(lock) {
-        if (settings.compositionVersion < 2) {
+        if (settings.compositionVersion < 3) {
             recomputeComposition()
-            settings.compositionVersion = 2
+            backfillImpedance()
+            settings.compositionVersion = 3
         }
     }
 
-    /** Recompute body composition for all scale readings after the profile changed. */
+    /**
+     * Recompute body composition for the app's own scale readings (after the
+     * profile changed). Sync flags are kept: a recalculation is not a new weigh-in.
+     */
     fun recomputeComposition(): Int = synchronized(lock) {
         var n = 0
         for (m in db.all()) {
-            if (m.impedanceOhm == null) continue
+            if (m.source != Measurement.Source.SCALE || m.impedanceOhm == null) continue
             val updated = MeasurementAssembler.withComposition(m, compositionFor(m.timestampMs))
+                .copy(healthConnectSynced = m.healthConnectSynced, garminExported = m.garminExported)
             if (updated != m) { db.update(updated); n++ }
+        }
+        reload()
+        n
+    }
+
+    /**
+     * Imported history has fat % but no impedance; recover it by inverting
+     * Xiaomi's formula with the current profile. Needs a profile.
+     */
+    fun backfillImpedance(): Int = synchronized(lock) {
+        val p = settings.profile ?: return 0
+        var n = 0
+        for (m in db.all()) {
+            if (m.source == Measurement.Source.SCALE) continue
+            val fat = m.fatPercent ?: continue
+            val d = java.time.Instant.ofEpochMilli(m.timestampMs).atZone(ZoneId.systemDefault()).toLocalDate()
+            val z = BodyComposition(p, p.ageAt(d.year, d.monthValue)).impedanceFromFat(m.weightKg, fat)
+            if (z != m.impedanceOhm) { db.update(m.copy(impedanceOhm = z)); n++ }
         }
         reload()
         n

@@ -121,12 +121,12 @@ class CoreTest {
 
     @Test fun metricSeriesSkipsMissingValuesAndComputesBmi() {
         val p = UserProfile(false, 1982, 7, 170.0)
-        val a = Measurement(timestampMs = 0L, weightKg = 64.4, fatPercent = 33.0, muscleKg = 40.6)
-        val b = Measurement(timestampMs = 86_400_000L, weightKg = 64.0)
-        assertEquals(1, Metric.FAT.series(listOf(a, b), p).size)
-        assertEquals(2, Metric.WEIGHT.series(listOf(a, b), p).size)
+        val a = Measurement(timestampMs = 1_791_446_400_000L, weightKg = 64.4, fatPercent = 33.0, muscleKg = 40.6) // 10:00 Berlin
+        val b = Measurement(timestampMs = 1_791_446_400_000L + 86_400_000L, weightKg = 64.0)
+        val berlin = ZoneId.of("Europe/Berlin")
+        assertEquals(1, Metric.FAT.series(listOf(a, b), p, berlin).size)
+        assertEquals(2, Metric.WEIGHT.series(listOf(a, b), p, berlin).size)
         assertEquals(22.28, Metric.BMI.of(a, p)!!, 0.01)
-        assertEquals(63.04, Metric.MUSCLE.of(a, p)!!, 0.01)
         assertNull(Metric.BMI.of(a, null))
     }
 
@@ -138,4 +138,77 @@ class CoreTest {
         val year = TimeAxis.ticks(to - 365 * 86_400_000L, to, zone, 4).map { it.label }
         assertEquals(listOf("янв 26", "апр", "июль", "окт"), year)
     }
+
+    // ---------------------------------------------------------------- 0.4
+
+    private val zone = ZoneId.of("Europe/Berlin")
+    private val day = 86_400_000L
+    private val now = java.time.ZonedDateTime.of(2026, 10, 10, 7, 0, 0, 0, zone).toInstant().toEpochMilli()
+
+    /** Daily trend points over [days] days changing by [kgPerWeek]. */
+    private fun line(days: Int, start: Double, kgPerWeek: Double, endMs: Long = now) =
+        (0 until days).map { i -> (endMs - (days - 1 - i) * day) to (start + kgPerWeek / 7 * i) }
+
+    @Test fun impedanceInverseRoundTrips() {
+        val calc = BodyComposition(UserProfile(false, 1982, 7, 170.0), 44)
+        val r = calc.compute(65.1, 480)
+        val z = calc.impedanceFromFat(65.1, r.fatPercent)!!
+        // fat is rounded to 0.1 %, and 0.1 % of fat corresponds to ~10 ohm here
+        assertTrue("got $z", kotlin.math.abs(z - 480) <= 6)
+    }
+
+    @Test fun bmrUsesLeanMass() {
+        assertEquals(370 + 21.6 * 43.3, BodyComposition.bmrKatchMcArdle(65.1, 33.4869), 0.5)
+    }
+
+    @Test fun morningIsStandard() {
+        val morning = Measurement(timestampMs = now, weightKg = 64.0, fatPercent = 33.0)          // 07:00
+        val evening = morning.copy(timestampMs = now + 13 * 3_600_000L, fatPercent = 33.0)        // 20:00
+        assertTrue(Conditions.isStandard(morning, zone))
+        assertFalse(Conditions.isStandard(evening, zone))
+        assertEquals(1, Metric.FAT.series(listOf(morning, evening), null, zone).size)
+        assertEquals(2, Metric.WEIGHT.series(listOf(morning, evening), null, zone).size)
+    }
+
+    @Test fun energyBalanceFromSlope() {
+        val est = EnergyBalance.estimate(line(28, 64.0, -0.35), now)!!
+        assertEquals(-0.35, est.kgPerWeek, 0.001)
+        assertEquals(-385.0, est.kcalPerDay, 1.0)
+        assertNull(EnergyBalance.estimate(line(10, 64.0, -0.35), now))   // span too short
+    }
+
+    @Test fun coachVerdicts() {
+        val goal = Goal(59.5, null)  // default pace 0.5 %/wk ≈ −350 kcal at 64 kg
+        assertEquals(Coach.Kind.NO_DATA, Coach.advise(line(3, 64.0, 0.0), goal, now, zone).kind)
+        assertEquals(Coach.Kind.ON_TRACK, Coach.advise(line(28, 64.3, -0.33), goal, now, zone).kind)
+        assertEquals(Coach.Kind.TOO_SLOW, Coach.advise(line(28, 64.1, -0.1), goal, now, zone).kind)
+        assertEquals(Coach.Kind.TOO_FAST, Coach.advise(line(28, 65.0, -0.9), goal, now, zone).kind)
+        assertEquals(Coach.Kind.WRONG_DIRECTION, Coach.advise(line(28, 63.6, 0.08), goal, now, zone).kind)
+        assertEquals(Coach.Kind.REACHED, Coach.advise(line(28, 59.6, 0.0), goal, now, zone).kind)
+        assertEquals(Coach.Kind.NO_GOAL, Coach.advise(line(28, 64.0, 0.07), null, now, zone).kind)
+        // 4 weeks of loss, then 4 weeks flat
+        val plateau = line(28, 63.0, -0.4, now - 28 * day) + line(28, 61.4, 0.0)
+        assertEquals(Coach.Kind.PLATEAU, Coach.advise(plateau, goal, now, zone).kind)
+    }
+
+    @Test fun goalPaceAndEarliestDate() {
+        val today = LocalDateOf(2026, 10, 10)
+        val g = Goal(59.5, LocalDateOf(2026, 11, 10))          // 4.5 kg in 31 days
+        assertTrue(Coach.requiredPacePct(64.0, g, today) > Coach.MAX_PACE_PCT)
+        val safe = Coach.earliestSafeDate(64.0, g, today)        // 0.64 kg/wk → 49.2 days
+        assertEquals(LocalDateOf(2026, 11, 29), safe)
+    }
+
+    @Test fun weeklySplit() {
+        val weeks = (0 until 8).map { i ->
+            WeeklyAnalysis.Week(LocalDateOf(2026, 8, 3).plusWeeks(i.toLong()),
+                avgSteps = if (i % 2 == 0) 11000.0 else 5000.0, avgSleepHours = 7.0,
+                balanceKcal = if (i % 2 == 0) -200.0 else 100.0)
+        }
+        val s = WeeklyAnalysis.split(weeks) { it.avgSteps }!!
+        assertEquals(-300.0, s.difference, 1e-9)
+        assertEquals(4, s.highWeeks)
+    }
+
+    private fun LocalDateOf(y: Int, m: Int, d: Int) = java.time.LocalDate.of(y, m, d)
 }

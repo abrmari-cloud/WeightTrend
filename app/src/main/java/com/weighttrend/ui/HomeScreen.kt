@@ -30,7 +30,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.weighttrend.core.BodyComposition
+import com.weighttrend.core.Coach
+import com.weighttrend.core.Conditions
+import com.weighttrend.core.Goal
 import com.weighttrend.core.Metric
+import java.time.ZoneId
+import kotlin.math.roundToInt
 import com.weighttrend.core.UserProfile
 import kotlinx.coroutines.delay
 
@@ -43,6 +49,7 @@ fun HomeScreen(
     points: List<TrendPoint>,
     live: LiveReading?,
     profile: UserProfile?,
+    goal: Goal?,
     scaleBound: Boolean,
     onOpenSettings: () -> Unit,
     modifier: Modifier = Modifier,
@@ -76,6 +83,12 @@ fun HomeScreen(
             )
             return@Column
         }
+
+        // ----- energy balance & advice -----
+        val advice = remember(points, goal) {
+            Coach.advise(points.map { it.m.timestampMs to it.trend }, goal, System.currentTimeMillis(), ZoneId.systemDefault())
+        }
+        CoachCard(advice, goal, points.lastOrNull()?.trend, onOpenSettings)
 
         // ----- metric selector -----
         Row(
@@ -148,33 +161,80 @@ fun HomeScreen(
         }
 
         // ----- body composition (tap a value to chart it) -----
-        val withComp = measurements.lastOrNull { it.fatPercent != null }
+        val zone = ZoneId.systemDefault()
+        val withComp = measurements.lastOrNull { it.fatPercent != null && Conditions.isStandard(it, zone) }
+            ?: measurements.lastOrNull { it.fatPercent != null }
         if (withComp != null) {
             Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("Состав тела · ${Format.dateTime(withComp.timestampMs)}", style = MaterialTheme.typography.titleSmall)
+                    Conditions.note(withComp, zone)?.let {
+                        Text("Утреннего взвешивания с составом тела нет — показано $it.",
+                            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    val fat = withComp.fatPercent!!
                     Row(Modifier.fillMaxWidth()) {
-                        MetricValue("Жир", withComp.fatPercent?.let(Format::pct), Modifier.weight(1f)) { metric = Metric.FAT; selected = null }
+                        MetricValue("Жир", Format.pct(fat), Modifier.weight(1f)) { metric = Metric.FAT; selected = null }
                         MetricValue("Вода", withComp.waterPercent?.let(Format::pct), Modifier.weight(1f)) { metric = Metric.WATER; selected = null }
                     }
                     Row(Modifier.fillMaxWidth()) {
-                        MetricValue(
-                            "Мышцы",
-                            withComp.muscleKg?.let { "${Format.kg(it)} · ${Format.pct(it / withComp.weightKg * 100)}" },
-                            Modifier.weight(1f),
-                        ) { metric = Metric.MUSCLE; selected = null }
+                        MetricValue("Безжировая масса", Format.kg(withComp.weightKg * (1 - fat / 100)), Modifier.weight(1f), null)
                         MetricValue("Кости", withComp.boneKg?.let(Format::kg), Modifier.weight(1f), null)
                     }
                     Row(Modifier.fillMaxWidth()) {
                         MetricValue("ИМТ", Metric.BMI.of(withComp, profile)?.let { Format.num(it) }, Modifier.weight(1f)) {
                             metric = Metric.BMI; selected = null
                         }
-                        MetricValue("Висцеральный жир", withComp.visceralFat?.let { Format.num(it, 0) }, Modifier.weight(1f), null)
+                        MetricValue("Импеданс", withComp.impedanceOhm?.let { "$it Ом" }, Modifier.weight(1f)) {
+                            metric = Metric.IMPEDANCE; selected = null
+                        }
                     }
+                    MetricValue(
+                        "Базовый обмен (по безжировой массе)",
+                        "${BodyComposition.bmrKatchMcArdle(withComp.weightKg, fat).roundToInt()} ккал/день",
+                        Modifier, null,
+                    )
+                    Text(
+                        "Весы измеряют только вес и импеданс; жир, вода и кости — расчёт по формуле Xiaomi. " +
+                            "Сравнивать стоит утренние взвешивания между собой.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
             }
         }
         Spacer(Modifier.height(24.dp))
+    }
+}
+
+@Composable
+private fun CoachCard(advice: Coach.Advice, goal: Goal?, trendKg: Double?, onOpenSettings: () -> Unit) {
+    val colors = MaterialTheme.colorScheme
+    val (bg, fg) = when (advice.kind) {
+        Coach.Kind.ON_TRACK, Coach.Kind.REACHED -> colors.primaryContainer to colors.onPrimaryContainer
+        Coach.Kind.TOO_FAST, Coach.Kind.WRONG_DIRECTION -> colors.tertiaryContainer to colors.onTertiaryContainer
+        else -> colors.surfaceContainerHigh to colors.onSurface
+    }
+    Card(colors = CardDefaults.cardColors(containerColor = bg)) {
+        Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text("Энергобаланс за 4 недели", style = MaterialTheme.typography.labelMedium, color = fg)
+            Text(advice.headline, style = MaterialTheme.typography.titleMedium, color = fg)
+            Text(advice.text, style = MaterialTheme.typography.bodyMedium, color = fg)
+            if (goal != null && trendKg != null && advice.kind != Coach.Kind.REACHED) {
+                val left = trendKg - goal.targetKg
+                Text(
+                    "Цель ${Format.kg(goal.targetKg)}" +
+                        (goal.targetDate?.let { " к ${Format.shortDate(it)} ${it.year}" } ?: "") +
+                        " · осталось ${Format.kg(kotlin.math.abs(left))}",
+                    style = MaterialTheme.typography.bodySmall, color = fg,
+                )
+            }
+            if (advice.kind == Coach.Kind.NO_GOAL) {
+                TextButton(onClick = onOpenSettings, contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)) {
+                    Text("Задать цель")
+                }
+            }
+        }
     }
 }
 

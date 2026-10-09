@@ -31,6 +31,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import com.weighttrend.core.Conditions
 import com.weighttrend.core.Measurement
 import java.time.Instant
 import java.time.ZoneId
@@ -90,6 +91,7 @@ fun HistoryScreen(
                                         append("тренд ").append(Format.num(r.p.trend))
                                         m.fatPercent?.let { append(" · жир ").append(Format.pct(it)) }
                                         if (m.source != Measurement.Source.SCALE) append(" · ").append(sourceLabel(m.source))
+                                        Conditions.note(m, java.time.ZoneId.systemDefault())?.let { append(" · ").append(it) }
                                     },
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,

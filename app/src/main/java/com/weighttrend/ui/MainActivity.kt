@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -54,7 +55,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private enum class Tab(val title: String) { HOME("Вес"), HISTORY("История"), SETTINGS("Настройки") }
+private enum class Tab(val title: String) { HOME("Вес"), HISTORY("История"), ANALYSIS("Анализ"), SETTINGS("Настройки") }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -63,6 +64,7 @@ private fun AppScreen(vm: AppViewModel) {
     val points by vm.points.collectAsStateCompat()
     val live by vm.live.collectAsStateCompat()
     val profile by vm.profile.collectAsStateCompat()
+    val goal by vm.goal.collectAsStateCompat()
     val scale by vm.scaleAddress.collectAsStateCompat()
     val message by vm.message.collectAsStateCompat()
     val snackbar = remember { SnackbarHostState() }
@@ -85,6 +87,7 @@ private fun AppScreen(vm: AppViewModel) {
                                 when (t) {
                                     Tab.HOME -> Icons.Filled.Home
                                     Tab.HISTORY -> Icons.Filled.DateRange
+                                    Tab.ANALYSIS -> Icons.Filled.Info
                                     Tab.SETTINGS -> Icons.Filled.Settings
                                 },
                                 contentDescription = null,
@@ -98,8 +101,9 @@ private fun AppScreen(vm: AppViewModel) {
     ) { padding ->
         val m = Modifier.padding(padding)
         when (tab) {
-            Tab.HOME -> HomeScreen(points, live, profile, scale != null, { tab = Tab.SETTINGS }, m)
+            Tab.HOME -> HomeScreen(points, live, profile, goal, scale != null, { tab = Tab.SETTINGS }, m)
             Tab.HISTORY -> HistoryScreen(points, { vm.delete(it) }, { vm.addManual(it) }, m)
+            Tab.ANALYSIS -> AnalysisScreen(vm, m)
             Tab.SETTINGS -> SettingsScreen(vm, m)
         }
     }

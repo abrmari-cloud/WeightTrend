@@ -89,12 +89,11 @@ class BodyComposition(private val profile: UserProfile, private val age: Int) {
         }
     }
 
-    private fun bodyFat(weight: Float, impedance: Float): Float {
+    /** Constants of Xiaomi's fat formula that depend on sex, age, weight and height. */
+    private fun fatParams(weight: Float): Pair<Float, Float> {
         var lbmSub = 0.8f
         if (sex == 0 && age <= 49) lbmSub = 9.25f
         else if (sex == 0 && age > 49) lbmSub = 7.25f
-
-        val lbmCoeff = lbmCoefficient(weight, impedance)
         var coeff = 1.0f
         if (sex == 1 && weight < 61.0f) {
             coeff = 0.98f
@@ -105,9 +104,36 @@ class BodyComposition(private val profile: UserProfile, private val age: Int) {
             coeff = 1.02f
             if (height > 160.0f) coeff *= 1.03f
         }
+        return lbmSub to coeff
+    }
+
+    private fun bodyFat(weight: Float, impedance: Float): Float {
+        val (lbmSub, coeff) = fatParams(weight)
+        val lbmCoeff = lbmCoefficient(weight, impedance)
         var fat = (1.0f - (((lbmCoeff - lbmSub) * coeff) / weight)) * 100.0f
         if (fat > 63.0f) fat = 75.0f
         return fat
+    }
+
+    /**
+     * Inverse of the fat formula: the impedance that makes Xiaomi's algorithm
+     * report [fatPercent]. Used to recover impedance for Zepp Life history,
+     * which exports fat % but not the measured impedance.
+     */
+    fun impedanceFromFat(weightKg: Double, fatPercent: Double): Int? {
+        if (fatPercent <= 0.0 || fatPercent >= 63.0) return null
+        val w = weightKg.toFloat()
+        val (lbmSub, coeff) = fatParams(w)
+        val lbmCoeff = (1.0 - fatPercent / 100.0) * w / coeff + lbmSub
+        val base = (height * 9.058 / 100.0) * (height / 100.0) + w * 0.32 + 12.226 - age * 0.0542
+        val z = (base - lbmCoeff) / 0.0068
+        return Math.round(z).toInt().takeIf { it in 100..1500 }
+    }
+
+    companion object {
+        /** Katch–McArdle basal metabolic rate from lean (fat-free) mass, kcal/day. */
+        fun bmrKatchMcArdle(weightKg: Double, fatPercent: Double): Double =
+            370.0 + 21.6 * weightKg * (1.0 - fatPercent / 100.0)
     }
 }
 

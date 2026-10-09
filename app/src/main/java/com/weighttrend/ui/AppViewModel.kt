@@ -7,6 +7,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.weighttrend.ble.ScaleScanner
 import com.weighttrend.core.FitWeightWriter
+import com.weighttrend.core.Goal
 import com.weighttrend.core.LibraCsv
 import com.weighttrend.core.Measurement
 import com.weighttrend.core.MiScaleFrame
@@ -15,6 +16,7 @@ import com.weighttrend.core.UserProfile
 import com.weighttrend.data.Repository
 import com.weighttrend.garmin.GarminStore
 import com.weighttrend.garmin.GarminSync
+import com.weighttrend.hc.ActivityReader
 import com.weighttrend.hc.HealthConnectSync
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -186,7 +188,49 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         _profile.value = p
         viewModelScope.launch(Dispatchers.IO) {
             val n = repo.recomputeComposition()
+            repo.backfillImpedance()
             _message.value = if (n > 0) "Профиль сохранён, пересчитано взвешиваний: $n" else "Профиль сохранён"
+        }
+    }
+
+    // ---------- Goal ----------
+
+    private val _goal = MutableStateFlow(repo.settings.goal)
+    val goal: StateFlow<Goal?> = _goal.asStateFlow()
+
+    fun saveGoal(g: Goal?) {
+        repo.settings.goal = g
+        _goal.value = g
+        _message.value = if (g == null) "Цель убрана" else "Цель сохранена"
+    }
+
+    // ---------- Steps & sleep analysis ----------
+
+    data class AnalysisState(
+        val loading: Boolean = false,
+        val hasAccess: Boolean = false,
+        val result: ActivityReader.Result? = null,
+        val error: String? = null,
+    )
+
+    private val _analysis = MutableStateFlow(AnalysisState())
+    val analysis: StateFlow<AnalysisState> = _analysis.asStateFlow()
+
+    fun loadAnalysis(force: Boolean = false) {
+        if (_analysis.value.loading || (!force && _analysis.value.result != null)) return
+        viewModelScope.launch(Dispatchers.IO) {
+            val app = getApplication<Application>()
+            if (!HealthConnectSync.isAvailable(app)) {
+                _analysis.value = AnalysisState(error = "Health Connect на этом телефоне недоступен")
+                return@launch
+            }
+            val access = runCatching { ActivityReader.hasAccess(app) }.getOrDefault(false)
+            if (!access) { _analysis.value = AnalysisState(hasAccess = false); return@launch }
+            _analysis.value = AnalysisState(loading = true, hasAccess = true)
+            _analysis.value = runCatching { ActivityReader.read(app) }.fold(
+                { AnalysisState(hasAccess = true, result = it) },
+                { AnalysisState(hasAccess = true, error = it.message ?: "Ошибка чтения Health Connect") },
+            )
         }
     }
 

@@ -37,6 +37,22 @@ class Settings(context: Context) {
         get() = prefs.getInt("composition_version", 1)
         set(v) = prefs.edit().putInt("composition_version", v).apply()
 
+    var goal: com.weighttrend.core.Goal?
+        get() {
+            val kg = prefs.getFloat("goal_kg", 0f)
+            if (kg <= 0f) return null
+            val day = prefs.getLong("goal_date", Long.MIN_VALUE)
+            return com.weighttrend.core.Goal(kg.toDouble(), if (day == Long.MIN_VALUE) null else java.time.LocalDate.ofEpochDay(day))
+        }
+        set(g) {
+            prefs.edit().apply {
+                if (g == null) { remove("goal_kg"); remove("goal_date") } else {
+                    putFloat("goal_kg", g.targetKg.toFloat())
+                    if (g.targetDate == null) remove("goal_date") else putLong("goal_date", g.targetDate.toEpochDay())
+                }
+            }.apply()
+        }
+
     var healthConnectEnabled: Boolean
         get() = prefs.getBoolean("hc_enabled", false)
         set(v) = prefs.edit().putBoolean("hc_enabled", v).apply()
