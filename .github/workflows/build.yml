@@ -1,0 +1,40 @@
+name: Build APK
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Restore signing key
+        env:
+          KEYSTORE: ${{ secrets.WEIGHTTREND_KEYSTORE }}
+        run: |
+          if [ -z "$KEYSTORE" ]; then
+            echo "::warning::Secret WEIGHTTREND_KEYSTORE is not set: building with a throwaway key. Such an APK cannot be installed over a properly signed one."
+          else
+            mkdir -p app/keystore
+            echo "$KEYSTORE" | base64 -d > app/keystore/personal.jks
+          fi
+
+      - name: Unit tests
+        run: ./gradlew --no-daemon testDebugUnitTest
+
+      - name: Build APK
+        run: ./gradlew --no-daemon assembleRelease
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: WeightTrend-apk
+          path: app/build/outputs/apk/release/*.apk
