@@ -62,7 +62,7 @@ fun AnalysisScreen(vm: AppViewModel, modifier: Modifier = Modifier) {
                 Text("Отчёт для консультации", style = MaterialTheme.typography.titleMedium,
                     color = MaterialTheme.colorScheme.onPrimaryContainer)
                 Text(
-                    "Цифры за 8 недель одним текстом: вес и баланс, цель, состав тела, шаги, сон, тренировки и еда. " +
+                    "Цифры за 8 недель одним текстом: вес и баланс, цель, состав тела, замеры, шаги, сон, тренировки и еда. " +
                         "Отправьте его в чат с Claude или консультантом.",
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onPrimaryContainer,
                 )

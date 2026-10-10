@@ -249,8 +249,20 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
         return com.weighttrend.core.ConsultationReport.build(
             ms, _profile.value, _goal.value, weeks, note, System.currentTimeMillis(), zone,
+            bodyMeasures = repo.bodyMeasures.value,
         )
     }
+
+    // ---------- Tape measurements ----------
+
+    val bodyMeasures: StateFlow<List<com.weighttrend.core.BodyMeasure>> = repo.bodyMeasures
+
+    fun saveBodyMeasure(b: com.weighttrend.core.BodyMeasure) = viewModelScope.launch(Dispatchers.IO) {
+        repo.saveBodyMeasure(b)
+        _message.value = "Замеры сохранены"
+    }
+
+    fun deleteBodyMeasure(id: Long) = viewModelScope.launch(Dispatchers.IO) { repo.deleteBodyMeasure(id) }
 
     // ---------- Health Connect ----------
 

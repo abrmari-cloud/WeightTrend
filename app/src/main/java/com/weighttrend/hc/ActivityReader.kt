@@ -136,7 +136,7 @@ object ActivityReader {
             if (!canNutrition) add("питание")
         }
         return Result(steps, sleep, history, denied, extra.filterValues {
-            it.activeKcal != null || it.exercises.isNotEmpty() || it.intakeKcal != null
+            it.workoutKcal != null || it.exercises.isNotEmpty() || it.intakeKcal != null
         }, missing)
     }
 
@@ -158,7 +158,7 @@ object ActivityReader {
             )
             if (canActive) {
                 days.mapNotNull { it.result[ActiveCaloriesBurnedRecord.ACTIVE_CALORIES_TOTAL]?.inKilocalories?.takeIf { k -> k > 0 } }
-                    .takeIf { it.isNotEmpty() }?.let { active = it.average() }
+                    .takeIf { it.isNotEmpty() }?.let { active = it.sum() }   // week total: Garmin sends only recorded workouts
             }
             if (canNutrition) {
                 val logged = days.filter { (it.result[NutritionRecord.ENERGY_TOTAL]?.inKilocalories ?: 0.0) > 0 }
@@ -187,7 +187,7 @@ object ActivityReader {
             byType.forEach { (t, v) -> exercises += WeeklyAnalysis.Exercise(t, v.first, v.second.toInt()) }
         }
         return WeeklyAnalysis.Week(
-            start = week, activeKcal = active, exercises = exercises.sortedByDescending { it.minutes },
+            start = week, workoutKcal = active, exercises = exercises.sortedByDescending { it.minutes },
             intakeKcal = intake, proteinG = protein, daysLogged = daysLogged,
         )
     }

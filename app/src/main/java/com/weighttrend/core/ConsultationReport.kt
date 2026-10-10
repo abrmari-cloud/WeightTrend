@@ -28,6 +28,7 @@ object ConsultationReport {
         nowMs: Long,
         zone: ZoneId,
         weeksShown: Int = 8,
+        bodyMeasures: List<BodyMeasure> = emptyList(),
     ): String = buildString {
         val today = Instant.ofEpochMilli(nowMs).atZone(zone).toLocalDate()
         val sorted = measurements.sortedBy { it.timestampMs }
@@ -90,11 +91,35 @@ object ConsultationReport {
             appendLine()
         }
 
+        // ---- tape measurements
+        val tape = bodyMeasures.sortedBy { it.date }
+        tape.lastOrNull()?.let { last ->
+            val prev = tape.getOrNull(tape.size - 2)
+            val first = tape.first().takeIf { tape.size > 2 }
+            append("Замеры сантиметром, см (последний ${DATE.format(last.date)}")
+            prev?.let { append(", в скобках изменение к ${DATE.format(it.date)}") }
+            first?.let { append(" / к ${DATE.format(it.date)}") }
+            appendLine("):")
+            val parts = BodyMeasure.Site.entries.mapNotNull { site ->
+                val v = last[site] ?: return@mapNotNull null
+                val changes = listOfNotNull(prev?.get(site)?.let { signed(v - it) }, first?.get(site)?.let { signed(v - it) })
+                site.title.lowercase(RU) + " " + cm(v) + (if (changes.isNotEmpty()) " (${changes.joinToString(" / ")})" else "")
+            }
+            appendLine(parts.joinToString(", ") + ".")
+            val extras = buildList {
+                last.navyFatPercent(profile)?.let { add("жир по формуле Navy ${num(it)} %") }
+                last.waistToHeight(profile)?.let { add("талия/рост ${num(it, 2)}") }
+                last.waistToHip()?.let { add("талия/бёдра ${num(it, 2)}") }
+            }
+            if (extras.isNotEmpty()) appendLine(extras.joinToString(", ").replaceFirstChar { it.titlecase(RU) } + ".")
+            appendLine()
+        }
+
         // ---- weekly table
         val shown = weeks.filter { !it.start.isAfter(today) }.takeLast(weeksShown)
         if (shown.isNotEmpty()) {
             appendLine("По неделям (с понедельника):")
-            appendLine("неделя | вес ср. | баланс ккал/день | шаги/день | сон ч | активные ккал/день | тренировки | еда ккал/день | белок г/день")
+            appendLine("неделя | вес ср. | баланс ккал/день | шаги/день | сон ч | ккал тренировок за нед. | тренировки | еда ккал/день | белок г/день")
             for (w in shown.asReversed()) {
                 appendLine(listOf(
                     SHORT.format(w.start),
@@ -102,11 +127,18 @@ object ConsultationReport {
                     w.balanceKcal?.let { kcal(it) } ?: "—",
                     w.avgSteps?.let { int(it) } ?: "—",
                     w.avgSleepHours?.let { num(it) } ?: "—",
-                    w.activeKcal?.let { int(it) } ?: "—",
-                    w.exercises.takeIf { it.isNotEmpty() }?.joinToString(", ") { "${it.type} ${it.sessions}× (${it.minutes} мин)" } ?: "—",
+                    w.workoutKcal?.let { int(it) } ?: "—",
+                    w.exercises.takeIf { it.isNotEmpty() }?.let { ex ->
+                        ex.joinToString(", ") { "${it.type} ${it.sessions}× (${it.minutes} мин)" } +
+                            (w.kcalPerWorkout?.let { " ≈${int(it)} ккал за тренировку" } ?: "")
+                    } ?: "—",
                     w.intakeKcal?.let { "${int(it)} (${w.daysLogged} дн.)" } ?: "—",
                     w.proteinG?.let { int(it) } ?: "—",
                 ).joinToString(" | "))
+            }
+            if (shown.any { it.workoutKcal != null }) {
+                appendLine("Калории тренировок — только записанных на часах: Garmin передаёт в Health Connect лишь их. " +
+                    "Это нижняя граница: шаги и незаписанные тренировки сюда не входят.")
             }
             appendLine()
 
@@ -137,6 +169,7 @@ object ConsultationReport {
     }
     private fun num(v: Double, digits: Int = 1) = String.format(RU, "%.${digits}f", v)
     private fun kg(v: Double) = num(v) + " кг"
+    private fun cm(v: Double) = if (v % 1.0 == 0.0) v.roundToInt().toString() else num(v)
     private fun int(v: Double) = String.format(RU, "%,d", v.roundToInt())
     private fun kcal(v: Double) = (if (v > 0) "+" else if (v < 0) "−" else "") + "${int(abs(v))} ккал"
     private fun signed(v: Double, digits: Int = 1) =

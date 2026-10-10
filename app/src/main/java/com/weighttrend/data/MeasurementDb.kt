@@ -5,9 +5,11 @@ import android.content.Context
 import android.database.Cursor
 import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
+import com.weighttrend.core.BodyMeasure
 import com.weighttrend.core.Measurement
+import java.time.LocalDate
 
-class MeasurementDb(context: Context) : SQLiteOpenHelper(context, "weights.db", null, 1) {
+class MeasurementDb(context: Context) : SQLiteOpenHelper(context, "weights.db", null, 2) {
 
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL(
@@ -31,9 +33,53 @@ class MeasurementDb(context: Context) : SQLiteOpenHelper(context, "weights.db", 
         )
         db.execSQL("CREATE INDEX idx_ts ON measurements(ts)")
         db.execSQL("CREATE UNIQUE INDEX idx_key ON measurements(source, scale_key)")
+        createBodyMeasures(db)
     }
 
-    override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) = Unit
+    override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
+        if (oldVersion < 2) createBodyMeasures(db)
+    }
+
+    /** v2 (0.6): tape-measure circumferences, one row per day. */
+    private fun createBodyMeasures(db: SQLiteDatabase) {
+        val cols = BodyMeasure.Site.entries.joinToString(",\n") { "${it.column} REAL" }
+        db.execSQL("CREATE TABLE body_measures (id INTEGER PRIMARY KEY AUTOINCREMENT, day INTEGER NOT NULL UNIQUE,\n$cols)")
+    }
+
+    fun bodyMeasures(): List<BodyMeasure> =
+        readableDatabase.query("body_measures", null, null, null, null, null, "day ASC").use { c ->
+            buildList {
+                while (c.moveToNext()) {
+                    val values = BodyMeasure.Site.entries.mapNotNull { s ->
+                        val i = c.getColumnIndexOrThrow(s.column)
+                        if (c.isNull(i)) null else s to c.getDouble(i)
+                    }.toMap()
+                    add(BodyMeasure(c.getLong(c.getColumnIndexOrThrow("id")),
+                        LocalDate.ofEpochDay(c.getLong(c.getColumnIndexOrThrow("day"))), values))
+                }
+            }
+        }
+
+    /** Inserts or replaces the entry for that day (one entry per day). */
+    fun saveBodyMeasure(b: BodyMeasure) {
+        val cv = ContentValues().apply {
+            put("day", b.date.toEpochDay())
+            for (s in BodyMeasure.Site.entries) b[s]?.let { put(s.column, it) } ?: putNull(s.column)
+        }
+        val db = writableDatabase
+        db.beginTransaction()
+        try {
+            if (b.id != 0L) db.delete("body_measures", "id = ?", arrayOf(b.id.toString()))
+            db.insertWithOnConflict("body_measures", null, cv, SQLiteDatabase.CONFLICT_REPLACE)
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
+        }
+    }
+
+    fun deleteBodyMeasure(id: Long) {
+        writableDatabase.delete("body_measures", "id = ?", arrayOf(id.toString()))
+    }
 
     fun all(): List<Measurement> =
         readableDatabase.query("measurements", null, null, null, null, null, "ts ASC").use { c ->

@@ -22,12 +22,20 @@ object WeeklyAnalysis {
         val avgWeight: Double? = null,
         /** Energy balance from neighbouring weekly average weights; null without them. */
         val balanceKcal: Double? = null,
-        val activeKcal: Double? = null,    // average per day
+        /**
+         * Active calories for the whole week as other apps wrote them to Health Connect.
+         * Garmin writes only recorded workouts there, so this is a lower bound of real activity.
+         */
+        val workoutKcal: Double? = null,
         val exercises: List<Exercise> = emptyList(),
         val intakeKcal: Double? = null,    // average per logged day
         val proteinG: Double? = null,      // average per logged day
         val daysLogged: Int = 0,
-    )
+    ) {
+        val sessions: Int get() = exercises.sumOf { it.sessions }
+        /** Average calories per recorded workout, when both are known. */
+        val kcalPerWorkout: Double? get() = workoutKcal?.takeIf { sessions > 0 }?.let { it / sessions }
+    }
 
     data class Exercise(val type: String, val sessions: Int, val minutes: Int)
 
@@ -90,7 +98,7 @@ object WeeklyAnalysis {
             val e = extra[w]
             Week(
                 start = w, avgSteps = steps[w], avgSleepHours = sleep[w], avgWeight = avg[w], balanceKcal = bal[w],
-                activeKcal = e?.activeKcal, exercises = e?.exercises ?: emptyList(),
+                workoutKcal = e?.workoutKcal, exercises = e?.exercises ?: emptyList(),
                 intakeKcal = e?.intakeKcal, proteinG = e?.proteinG, daysLogged = e?.daysLogged ?: 0,
             )
         }

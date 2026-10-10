@@ -247,4 +247,31 @@ class CoreTest {
         assertTrue(text, text.contains("Энергобаланс за 4 недели"))
         assertTrue(text, text.contains("базовый обмен (Катч–Макардл)"))
     }
+
+    // ---------------------------------------------------------------- 0.6
+
+    @Test fun navyFormulaMatchesReference() {
+        // 170 cm woman: neck 33, waist 73, hips 100 → ≈27.1 %; neck 33.5, waist 78, hips 102 → ≈30.3 %
+        assertEquals(27.1, BodyMeasure.navyFatPercent(false, 170.0, 33.0, 73.0, 100.0)!!, 0.1)
+        assertEquals(30.3, BodyMeasure.navyFatPercent(false, 170.0, 33.5, 78.0, 102.0)!!, 0.1)
+        assertNull(BodyMeasure.navyFatPercent(false, 170.0, 33.0, 73.0, null))   // women need hips
+        assertTrue(BodyMeasure.navyFatPercent(true, 180.0, 38.0, 85.0, null)!! in 10.0..25.0)
+    }
+
+    @Test fun reportShowsTapeAndWorkoutCalories() {
+        val p = UserProfile(false, 1982, 7, 170.0)
+        val ms = (0 until 40).map { i -> Measurement(timestampMs = now - (39 - i) * day, weightKg = 63.0) }
+        val tape = listOf(
+            BodyMeasure(1, LocalDateOf(2017, 12, 20), mapOf(BodyMeasure.Site.NECK to 33.0, BodyMeasure.Site.WAIST to 73.0, BodyMeasure.Site.HIPS to 100.0)),
+            BodyMeasure(2, LocalDateOf(2021, 11, 26), mapOf(BodyMeasure.Site.NECK to 33.5, BodyMeasure.Site.WAIST to 78.0, BodyMeasure.Site.HIPS to 102.0)),
+            BodyMeasure(3, LocalDateOf(2023, 12, 31), mapOf(BodyMeasure.Site.WAIST to 77.0, BodyMeasure.Site.HIPS to 102.0)),
+        )
+        val week = WeeklyAnalysis.Week(LocalDateOf(2026, 9, 28), avgSteps = 9000.0, workoutKcal = 1132.0,
+            exercises = listOf(WeeklyAnalysis.Exercise("силовая", 2, 180)))
+        val text = ConsultationReport.build(ms, p, null, listOf(week), null, now, zone, bodyMeasures = tape)
+        assertTrue(text, text.contains("талия 77 (−1 / +4)"))
+        assertTrue(text, text.contains("талия/рост 0,45"))
+        assertTrue(text, text.contains("≈566 ккал за тренировку"))
+        assertTrue(text, text.contains("нижняя граница"))
+    }
 }

@@ -2,6 +2,7 @@ package com.weighttrend.data
 
 import android.content.Context
 import com.weighttrend.core.BodyComposition
+import com.weighttrend.core.BodyMeasure
 import com.weighttrend.core.HistoryMerge
 import com.weighttrend.core.LibraCsv
 import com.weighttrend.core.ZeppCsv
@@ -26,11 +27,21 @@ class Repository private constructor(context: Context) {
     private val _measurements = MutableStateFlow<List<Measurement>>(emptyList())
     val measurements: StateFlow<List<Measurement>> = _measurements.asStateFlow()
 
+    private val _bodyMeasures = MutableStateFlow<List<BodyMeasure>>(emptyList())
+    val bodyMeasures: StateFlow<List<BodyMeasure>> = _bodyMeasures.asStateFlow()
+
     private val lock = Any()
 
     fun reload() {
         _measurements.value = db.all()
     }
+
+    private fun reloadBody() {
+        _bodyMeasures.value = db.bodyMeasures()
+    }
+
+    fun saveBodyMeasure(b: BodyMeasure) = synchronized(lock) { db.saveBodyMeasure(b); reloadBody() }
+    fun deleteBodyMeasure(id: Long) = synchronized(lock) { db.deleteBodyMeasure(id); reloadBody() }
 
     /** Composition calculator for the current profile, or null if no profile yet. */
     fun compositionFor(timestampMs: Long): ((Double, Int) -> BodyComposition.Result)? {
@@ -158,7 +169,7 @@ class Repository private constructor(context: Context) {
         @Volatile private var instance: Repository? = null
         fun get(context: Context): Repository =
             instance ?: synchronized(this) {
-                instance ?: Repository(context).also { it.reload(); instance = it }
+                instance ?: Repository(context).also { it.reload(); it.reloadBody(); instance = it }
             }
     }
 }

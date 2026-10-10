@@ -8,6 +8,7 @@ import androidx.activity.viewModels
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.DateRange
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Settings
@@ -55,7 +56,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private enum class Tab(val title: String) { HOME("Вес"), HISTORY("История"), ANALYSIS("Анализ"), SETTINGS("Настройки") }
+private enum class Tab(val title: String) { HOME("Вес"), HISTORY("История"), MEASURES("Замеры"), ANALYSIS("Анализ"), SETTINGS("Настройки") }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -87,6 +88,7 @@ private fun AppScreen(vm: AppViewModel) {
                                 when (t) {
                                     Tab.HOME -> Icons.Filled.Home
                                     Tab.HISTORY -> Icons.Filled.DateRange
+                                    Tab.MEASURES -> Icons.Filled.Edit
                                     Tab.ANALYSIS -> Icons.Filled.Info
                                     Tab.SETTINGS -> Icons.Filled.Settings
                                 },
@@ -103,6 +105,7 @@ private fun AppScreen(vm: AppViewModel) {
         when (tab) {
             Tab.HOME -> HomeScreen(points, live, profile, goal, scale != null, { tab = Tab.SETTINGS }, m)
             Tab.HISTORY -> HistoryScreen(points, { vm.delete(it) }, { vm.addManual(it) }, m)
+            Tab.MEASURES -> MeasuresScreen(vm, m)
             Tab.ANALYSIS -> AnalysisScreen(vm, m)
             Tab.SETTINGS -> SettingsScreen(vm, m)
         }
