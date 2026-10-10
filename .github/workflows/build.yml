@@ -32,7 +32,18 @@ jobs:
           fi
 
       - name: Unit tests
-        run: ./gradlew --no-daemon testDebugUnitTest
+        run: |
+          set -o pipefail
+          if ! ./gradlew --no-daemon testDebugUnitTest 2>&1 | tee gradle.log; then
+            # Surface compiler errors and failed tests as annotations (readable without the raw log).
+            grep -E "^e: |FAILED|Error|expected|AssertionError" gradle.log | head -40 | while IFS= read -r line; do
+              echo "::error::${line}"
+            done
+            for f in app/build/test-results/testDebugUnitTest/*.xml; do
+              grep -h -A2 "<failure" "$f" 2>/dev/null | head -6 | while IFS= read -r line; do echo "::error::${line}"; done
+            done
+            exit 1
+          fi
 
       - name: Build APK
         run: |
