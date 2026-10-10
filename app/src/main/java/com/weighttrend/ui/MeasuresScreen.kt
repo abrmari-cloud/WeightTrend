@@ -117,11 +117,12 @@ fun MeasuresScreen(vm: AppViewModel, modifier: Modifier = Modifier) {
                         FilterChip(selected = key == seriesKey, onClick = { seriesKey = key }, label = { Text(s.title) })
                     }
                 }
-                val chartPoints = list.mapNotNull { b ->
+                val navy = BodyMeasure.navySeries(list, profile)
+                val chartPoints = list.mapIndexedNotNull { i, b ->
                     val v = when (series) {
                         is Series.Tape -> b[series.site]
-                        Series.Navy -> b.navyFatPercent(profile)
-                    } ?: return@mapNotNull null
+                        Series.Navy -> navy[i]
+                    } ?: return@mapIndexedNotNull null
                     b.date.atStartOfDay(zone).toInstant().toEpochMilli() to v
                 }
                 Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)) {
@@ -149,7 +150,8 @@ fun MeasuresScreen(vm: AppViewModel, modifier: Modifier = Modifier) {
                 Text("Нажмите, чтобы изменить; долгое нажатие — удалить.",
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Column {
-                    list.asReversed().forEach { b ->
+                    list.indices.reversed().forEach { i ->
+                        val b = list[i]
                         Column(
                             Modifier.fillMaxWidth()
                                 .combinedClickable(onClick = { editing = b }, onLongClick = { toDelete = b })
@@ -158,7 +160,7 @@ fun MeasuresScreen(vm: AppViewModel, modifier: Modifier = Modifier) {
                             Text(DATE.format(b.date), style = MaterialTheme.typography.bodyLarge)
                             Text(
                                 Site.entries.mapNotNull { s -> b[s]?.let { "${s.title.lowercase()} ${cm(it)}" } }.joinToString(" · ") +
-                                    (b.navyFatPercent(profile)?.let { " · жир ≈${Format.num(it)} %" } ?: ""),
+                                    (navy[i]?.let { " · жир ≈${Format.num(it)} %" } ?: ""),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -259,7 +261,7 @@ private fun SummaryCard(list: List<BodyMeasure>, profile: UserProfile?, scaleFat
             }
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             val lines = buildList {
-                last.navyFatPercent(profile)?.let { navy ->
+                BodyMeasure.navySeries(list, profile).last()?.let { navy ->
                     val scale = scaleFatNear(last.date)
                     add("Жир по формуле Navy: ${Format.num(navy)} %" +
                         (scale?.let { " (весы в те же дни: ${Format.num(it)} %)" } ?: ""))
@@ -417,7 +419,7 @@ private fun LineChart(points: List<Pair<Long, Double>>) {
     }
 }
 
-private fun cm(v: Double): String = if (abs(v % 1.0) < 1e-9) v.toLong().toString() else Format.num(v)
+private fun cm(v: Double): String = if (abs(v - Math.round(v)) < 0.05) Math.round(v).toString() else Format.num(v)
 private fun delta(d: Double): String = when {
     d > 0.05 -> "+" + cm(d)
     d < -0.05 -> "−" + cm(-d)

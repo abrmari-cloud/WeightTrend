@@ -270,6 +270,7 @@ class CoreTest {
             exercises = listOf(WeeklyAnalysis.Exercise("силовая", 2, 180)))
         val text = ConsultationReport.build(ms, p, null, listOf(week), null, now, zone, bodyMeasures = tape)
         assertTrue(text, text.contains("талия 77 (−1 / +4)"))
+        assertTrue(text, text.contains("Жир по формуле Navy 29,8 %"))   // neck borrowed from 2021
         assertTrue(text, text.contains("талия/рост 0,45"))
         assertTrue(text, text.contains("≈566 ккал за тренировку"))
         assertTrue(text, text.contains("нижняя граница"))

@@ -102,12 +102,12 @@ object ConsultationReport {
             appendLine("):")
             val parts = BodyMeasure.Site.entries.mapNotNull { site ->
                 val v = last[site] ?: return@mapNotNull null
-                val changes = listOfNotNull(prev?.get(site)?.let { signed(v - it) }, first?.get(site)?.let { signed(v - it) })
+                val changes = listOfNotNull(prev?.get(site)?.let { signedCm(v - it) }, first?.get(site)?.let { signedCm(v - it) })
                 site.title.lowercase(RU) + " " + cm(v) + (if (changes.isNotEmpty()) " (${changes.joinToString(" / ")})" else "")
             }
             appendLine(parts.joinToString(", ") + ".")
             val extras = buildList {
-                last.navyFatPercent(profile)?.let { add("жир по формуле Navy ${num(it)} %") }
+                BodyMeasure.navySeries(tape, profile).last()?.let { add("жир по формуле Navy ${num(it)} %") }
                 last.waistToHeight(profile)?.let { add("талия/рост ${num(it, 2)}") }
                 last.waistToHip()?.let { add("талия/бёдра ${num(it, 2)}") }
             }
@@ -169,7 +169,12 @@ object ConsultationReport {
     }
     private fun num(v: Double, digits: Int = 1) = String.format(RU, "%.${digits}f", v)
     private fun kg(v: Double) = num(v) + " кг"
-    private fun cm(v: Double) = if (v % 1.0 == 0.0) v.roundToInt().toString() else num(v)
+    private fun signedCm(d: Double) = when {
+        d > 0.05 -> "+" + cm(d)
+        d < -0.05 -> "−" + cm(-d)
+        else -> "0"
+    }
+    private fun cm(v: Double) = if (abs(v - v.roundToInt()) < 0.05) v.roundToInt().toString() else num(v)
     private fun int(v: Double) = String.format(RU, "%,d", v.roundToInt())
     private fun kcal(v: Double) = (if (v > 0) "+" else if (v < 0) "−" else "") + "${int(abs(v))} ккал"
     private fun signed(v: Double, digits: Int = 1) =

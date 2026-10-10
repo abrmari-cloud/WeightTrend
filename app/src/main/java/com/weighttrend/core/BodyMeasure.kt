@@ -24,9 +24,12 @@ data class BodyMeasure(
 
     operator fun get(s: Site): Double? = values[s]
 
-    /** Body fat by the U.S. Navy tape formula; null without neck, waist (and hips for women). */
-    fun navyFatPercent(profile: UserProfile?): Double? =
-        profile?.let { BodyMeasure.navyFatPercent(it.isMale, it.heightCm, this[Site.NECK], this[Site.WAIST], this[Site.HIPS]) }
+    /**
+     * Body fat by the U.S. Navy tape formula; null without neck, waist (and hips for women).
+     * The neck barely changes, so a missing one may come from an earlier entry ([fallbackNeck]).
+     */
+    fun navyFatPercent(profile: UserProfile?, fallbackNeck: Double? = null): Double? =
+        profile?.let { BodyMeasure.navyFatPercent(it.isMale, it.heightCm, this[Site.NECK] ?: fallbackNeck, this[Site.WAIST], this[Site.HIPS]) }
 
     /** Waist-to-height ratio; under 0.5 is the usual healthy threshold. */
     fun waistToHeight(profile: UserProfile?): Double? {
@@ -42,6 +45,12 @@ data class BodyMeasure(
     }
 
     companion object {
+        /** Navy body fat for each entry of a date-sorted list, borrowing the latest earlier neck when missing. */
+        fun navySeries(sorted: List<BodyMeasure>, profile: UserProfile?): List<Double?> {
+            var neck: Double? = null
+            return sorted.map { b -> b[Site.NECK]?.let { neck = it }; b.navyFatPercent(profile, neck) }
+        }
+
         const val MIN_CM = 10.0
         const val MAX_CM = 250.0
 
