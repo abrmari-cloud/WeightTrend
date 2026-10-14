@@ -191,6 +191,61 @@ class CoreTest {
         assertEquals(Coach.Kind.PLATEAU, Coach.advise(plateau, goal, now, zone).kind)
     }
 
+    /** Deterministic "water" scatter of up to ±0.4 kg, no randomness so tests are stable. */
+    private fun noisy(pts: List<Pair<Long, Double>>) =
+        pts.mapIndexed { i, (t, kg) -> t to kg + 0.4 * kotlin.math.sin(i * 2.399) }
+
+    @Test fun balanceFitsRawWeighInsWithoutTrendLag() {
+        // 3 weeks at −0.5 kg/wk, then 2 weeks flat: the raw 2-week fit sees the stop at once.
+        val pts = line(21, 64.0, -0.5, now - 14 * day) + line(14, 64.0 - 0.5 / 7 * 20, 0.0)
+        val recent = EnergyBalance.estimate(pts, now, EnergyBalance.SHORT_WINDOW_DAYS, zone)!!
+        assertEquals(0.0, recent.kcalPerDay, 1.0)
+        // the 4-week number still shows a deficit — this is why the shift note exists
+        assertTrue(EnergyBalance.estimate(pts, now, zone = zone)!!.kcalPerDay < -200)
+    }
+
+    @Test fun shiftDetectsStoppedDeficit() {
+        val pts = noisy(line(21, 64.0, -0.5, now - 14 * day) + line(14, 64.0 - 0.5 / 7 * 20, 0.0))
+        val shift = EnergyBalance.shift(pts, now, zone)!!
+        assertTrue("change ${shift.changeKcal} ± ${shift.error}", shift.significant)
+        assertTrue(shift.changeKcal > 0)
+        assertTrue(Coach.shiftNote(shift)!!.contains("профицита"))
+        val advice = Coach.advise(pts, Goal(60.0, null), now, zone)
+        assertTrue(advice.shiftNote != null && advice.recent != null)
+    }
+
+    @Test fun shiftDetectsStartedDeficit() {
+        val pts = noisy(line(21, 64.0, 0.0, now - 14 * day) + line(14, 64.0, -0.6))
+        val shift = EnergyBalance.shift(pts, now, zone)!!
+        assertTrue(shift.significant)
+        assertTrue(shift.changeKcal < 0)
+    }
+
+    @Test fun steadyNoisyLossIsNoShift() {
+        val pts = noisy(line(42, 65.0, -0.4))
+        val shift = EnergyBalance.shift(pts, now, zone)!!
+        assertFalse("change ${shift.changeKcal} ± ${shift.error}", shift.significant)
+        assertNull(Coach.advise(pts, Goal(60.0, null), now, zone).shiftNote)
+        val est = EnergyBalance.estimate(pts, now, zone = zone)!!
+        assertEquals(-440.0, est.kcalPerDay, 150.0)
+        assertTrue(est.errorKcal in 30.0..200.0)
+    }
+
+    @Test fun severalWeighInsPerDayCountOnce() {
+        val base = line(28, 64.0, -0.35)
+        // an extra, heavier evening weigh-in on every day must not change the slope
+        val withEvenings = base + base.map { (t, kg) -> (t + 12 * 3_600_000L) to kg + 0.8 }
+        val a = EnergyBalance.estimate(base, now, zone = zone)!!
+        val b = EnergyBalance.estimate(withEvenings.filter { it.first <= now }, now, zone = zone)!!
+        assertEquals(28, a.weighIns)
+        assertEquals(a.kcalPerDay, b.kcalPerDay, 40.0)
+    }
+
+    @Test fun shortWindowNeedsEnoughWeighIns() {
+        val sparse = line(14, 64.0, -0.4).filterIndexed { i, _ -> i % 4 == 0 }   // 4 days
+        assertNull(EnergyBalance.estimate(sparse, now, EnergyBalance.SHORT_WINDOW_DAYS, zone))
+    }
+
     @Test fun goalPaceAndEarliestDate() {
         val today = LocalDateOf(2026, 10, 10)
         val g = Goal(59.5, LocalDateOf(2026, 11, 10))          // 4.5 kg in 31 days

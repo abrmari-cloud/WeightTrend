@@ -86,7 +86,10 @@ fun HomeScreen(
 
         // ----- energy balance & advice -----
         val advice = remember(points, goal) {
-            Coach.advise(points.map { it.m.timestampMs to it.trend }, goal, System.currentTimeMillis(), ZoneId.systemDefault())
+            Coach.advise(
+                points.map { it.m.timestampMs to it.trend }, goal, System.currentTimeMillis(), ZoneId.systemDefault(),
+                weights = points.map { it.m.timestampMs to it.m.weightKg },
+            )
         }
         CoachCard(advice, goal, points.lastOrNull()?.trend, onOpenSettings)
 
@@ -220,6 +223,15 @@ private fun CoachCard(advice: Coach.Advice, goal: Goal?, trendKg: Double?, onOpe
             Text("Энергобаланс за 4 недели", style = MaterialTheme.typography.labelMedium, color = fg)
             Text(advice.headline, style = MaterialTheme.typography.titleMedium, color = fg)
             Text(advice.text, style = MaterialTheme.typography.bodyMedium, color = fg)
+            advice.recent?.let { r ->
+                Text(
+                    "За 2 недели: ${Coach.signedKcal(r.kcalPerDay)} в день ± ${r.errorKcal.roundToInt()} — быстрее реагирует, но шумнее",
+                    style = MaterialTheme.typography.bodySmall, color = fg,
+                )
+            }
+            advice.shiftNote?.let { note ->
+                Text("⚠ $note", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold, color = fg)
+            }
             if (goal != null && trendKg != null && advice.kind != Coach.Kind.REACHED) {
                 val left = trendKg - goal.targetKg
                 Text(

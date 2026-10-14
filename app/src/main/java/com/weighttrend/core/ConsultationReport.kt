@@ -61,13 +61,18 @@ object ConsultationReport {
         val recent = trend.count { it.first >= nowMs - 28 * DAY_MS }
         appendLine("Вес по тренду: ${kg(trendNow)} (за неделю ${trendChange(7)}, за 4 недели ${trendChange(28)}, " +
             "за 12 недель ${trendChange(84)} кг). Взвешиваний за 4 недели: $recent.")
-        val est = EnergyBalance.estimate(trend, nowMs)
+        val raw = sorted.map { it.timestampMs to it.weightKg }
+        val est = EnergyBalance.estimate(raw, nowMs, zone = zone)
         if (est != null) {
-            appendLine("Энергобаланс за 4 недели: ${kcal(est.kcalPerDay)}/день (${signed(est.kgPerWeek, 2)} кг/нед), " +
-                "по наклону тренда × 7700 ккал/кг.")
+            appendLine("Энергобаланс за 4 недели: ${kcal(est.kcalPerDay)}/день ± ${int(est.errorKcal)} " +
+                "(${signed(est.kgPerWeek, 2)} кг/нед), по наклону взвешиваний × 7700 ккал/кг.")
         }
-        val advice = Coach.advise(trend, goal, nowMs, zone)
+        EnergyBalance.estimate(raw, nowMs, EnergyBalance.SHORT_WINDOW_DAYS, zone)?.let { r ->
+            appendLine("Энергобаланс за 2 недели: ${kcal(r.kcalPerDay)}/день ± ${int(r.errorKcal)} (быстрее реагирует, но шумнее).")
+        }
+        val advice = Coach.advise(trend, goal, nowMs, zone, raw)
         appendLine("Оценка приложения: ${advice.headline}. ${advice.text}")
+        advice.shiftNote?.let { appendLine("Смена режима: $it") }
         appendLine()
 
         // ---- body composition (morning weigh-ins only)

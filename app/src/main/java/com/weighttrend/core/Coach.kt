@@ -28,6 +28,10 @@ object Coach {
         val requiredKcal: Double?,
         /** When the goal is reached at the current pace, if moving towards it. */
         val forecast: LocalDate?,
+        /** Balance over the last 2 weeks (fast but noisy), when there are enough weigh-ins. */
+        val recent: EnergyBalance.Estimate? = null,
+        /** Set when the last 2 weeks differ clearly from the 2 weeks before. */
+        val shiftNote: String? = null,
     )
 
     /** Recommended pace when no date is set: 0.5 % of body weight per week. */
@@ -59,18 +63,46 @@ object Coach {
         return today.plusDays(ceil(weeks * 7).toLong())
     }
 
+    /**
+     * [trend] = (time, trend value) for the current weight; [weights] = raw weigh-ins
+     * the balance is fitted on (defaults to [trend] for callers that only have one series).
+     */
     fun advise(
         trend: List<Pair<Long, Double>>,
         goal: Goal?,
         nowMs: Long,
         zone: ZoneId,
+        weights: List<Pair<Long, Double>> = trend,
+    ): Advice {
+        val base = adviseOn4Weeks(trend, goal, nowMs, zone, weights)
+        if (base.kind == Kind.NO_DATA) return base
+        val recent = EnergyBalance.estimate(weights, nowMs, EnergyBalance.SHORT_WINDOW_DAYS, zone)
+        return base.copy(recent = recent, shiftNote = shiftNote(EnergyBalance.shift(weights, nowMs, zone)))
+    }
+
+    /** Human comment on a clear change between the last 2 weeks and the 2 before; null if none. */
+    fun shiftNote(shift: EnergyBalance.Shift?): String? {
+        if (shift == null || !shift.significant) return null
+        val change = shift.changeKcal
+        val towards = if (change > 0) "профицита (меньше дефицита)" else "дефицита"
+        return "Последние 2 недели ${signedKcal(shift.recent.kcalPerDay)} в день, а 2 недели до этого " +
+            "${signedKcal(shift.before.kcalPerDay)}: баланс сдвинулся примерно на ${signedKcal(change)} в сторону $towards. " +
+            "Цифра за 4 недели покажет это полностью только через пару недель."
+    }
+
+    private fun adviseOn4Weeks(
+        trend: List<Pair<Long, Double>>,
+        goal: Goal?,
+        nowMs: Long,
+        zone: ZoneId,
+        weights: List<Pair<Long, Double>>,
     ): Advice {
         val today = Instant.ofEpochMilli(nowMs).atZone(zone).toLocalDate()
-        val est = EnergyBalance.estimate(trend, nowMs)
+        val est = EnergyBalance.estimate(weights, nowMs, zone = zone)
         val trendNow = trend.lastOrNull()?.second
 
         if (est == null || trendNow == null) {
-            val n = trend.count { it.first >= nowMs - EnergyBalance.WINDOW_DAYS * 86_400_000L }
+            val n = weights.count { it.first >= nowMs - EnergyBalance.WINDOW_DAYS * 86_400_000L }
             return Advice(
                 Kind.NO_DATA, "Мало данных",
                 "За последние 4 недели взвешиваний: $n. Для оценки нужно хотя бы ${EnergyBalance.MIN_WEIGH_INS} " +
@@ -129,7 +161,7 @@ object Coach {
         }
 
         // Plateau: stalled now, but clearly moving towards the goal in the 4 weeks before.
-        val earlier = EnergyBalance.estimate(trend, nowMs - EnergyBalance.WINDOW_DAYS * 86_400_000L)
+        val earlier = EnergyBalance.estimate(weights, nowMs - EnergyBalance.WINDOW_DAYS * 86_400_000L, zone = zone)
         if (abs(est.kgPerWeek) < 0.05 && earlier != null && earlier.kgPerWeek * direction > 0.15) {
             val gap = abs(req - balance)
             return Advice(Kind.PLATEAU, "Плато",
@@ -179,6 +211,6 @@ object Coach {
     }
 
     private fun num(v: Double) = String.format(RU, "%.1f", v)
-    private fun signedKcal(v: Double) = (if (v > 0) "+" else if (v < 0) "−" else "") + "${abs(v).roundToInt()} ккал"
+    fun signedKcal(v: Double) = (if (v > 0) "+" else if (v < 0) "−" else "") + "${abs(v).roundToInt()} ккал"
     private fun signedKg(v: Double) = (if (v > 0) "+" else if (v < 0) "−" else "") + String.format(RU, "%.2f", abs(v))
 }
