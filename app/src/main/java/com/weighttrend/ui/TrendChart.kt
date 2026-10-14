@@ -8,6 +8,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.StrokeCap
@@ -29,7 +31,9 @@ import kotlin.math.max
 import kotlin.math.min
 
 /**
- * One metric over time: measurements as dots, the trend as a line (Libra style).
+ * One metric over time: measurements as faint dots, the trend as a thin smooth
+ * line with a soft gradient under it. [accent] colours the trend (green when
+ * things go well); [goal] draws a dashed target line when it is in view.
  * Tap to select the nearest point.
  */
 @Composable
@@ -41,6 +45,8 @@ fun TrendChart(
     selected: Metric.Point?,
     onSelect: (Metric.Point?) -> Unit,
     modifier: Modifier = Modifier,
+    accent: Color = MaterialTheme.colorScheme.primary,
+    goal: Double? = null,
 ) {
     val colors = MaterialTheme.colorScheme
     val measurer = rememberTextMeasurer()
@@ -50,7 +56,7 @@ fun TrendChart(
     Canvas(
         modifier = modifier
             .fillMaxWidth()
-            .height(240.dp)
+            .height(220.dp)
             .pointerInput(visible, fromMs, toMs) {
                 detectTapGestures { tap ->
                     if (visible.isEmpty()) return@detectTapGestures
@@ -76,8 +82,12 @@ fun TrendChart(
         val h = size.height - bottom - top
 
         // y range with a little padding, snapped to the grid step
-        val rawLo = visible.minOf { min(it.value, it.trend) }
-        val rawHi = visible.maxOf { max(it.value, it.trend) }
+        // include the goal only when it is close, so a far target does not flatten the curve
+        val dataLo = visible.minOf { min(it.value, it.trend) }
+        val dataHi = visible.maxOf { max(it.value, it.trend) }
+        val goalInView = goal?.takeIf { it in (dataLo - 1.5)..(dataHi + 1.5) }
+        val rawLo = min(dataLo, goalInView ?: dataLo)
+        val rawHi = max(dataHi, goalInView ?: dataHi)
         val step = niceStep((rawHi - rawLo).coerceAtLeast(0.5))
         val lo = floor((rawLo - step / 2) / step) * step
         val hi = ceil((rawHi + step / 2) / step) * step
@@ -85,13 +95,13 @@ fun TrendChart(
         fun x(ms: Long) = left + w * (ms - fromMs) / span
         fun y(v: Double) = top + h * (1f - ((v - lo) / (hi - lo)).toFloat())
 
-        // horizontal grid + value labels
-        val gridEffect = PathEffect.dashPathEffect(floatArrayOf(6f, 6f))
+        // horizontal grid (hairlines) + value labels
+        val hairline = 1f
         val digits = if (step < 1.0) 1 else 0
         var g = lo
         while (g <= hi + 1e-9) {
             val yy = y(g)
-            drawLine(colors.outlineVariant, Offset(left, yy), Offset(size.width, yy), strokeWidth = 1f, pathEffect = gridEffect)
+            drawLine(colors.outlineVariant.copy(alpha = 0.45f), Offset(left, yy), Offset(size.width, yy), strokeWidth = hairline)
             val t = measurer.measure(Format.num(g, digits), labelStyle)
             drawText(t, topLeft = Offset(left - t.size.width - 6.dp.toPx(), yy - t.size.height / 2f))
             g += step
@@ -102,7 +112,6 @@ fun TrendChart(
         var lastLabelRight = Float.NEGATIVE_INFINITY
         for (tick in TimeAxis.ticks(fromMs, toMs, ZoneId.systemDefault(), maxTicks)) {
             val xx = x(tick.epochMs)
-            drawLine(colors.outlineVariant.copy(alpha = 0.5f), Offset(xx, top), Offset(xx, top + h), strokeWidth = 1f)
             val t = measurer.measure(tick.label, labelStyle)
             val lx = (xx - t.size.width / 2f).coerceIn(left, size.width - t.size.width)
             if (lx > lastLabelRight + 4.dp.toPx()) {
@@ -111,26 +120,57 @@ fun TrendChart(
             }
         }
 
-        // measurements
-        for (p in visible) {
-            drawCircle(colors.primary.copy(alpha = 0.35f), radius = 3.dp.toPx(), center = Offset(x(p.m.timestampMs), y(p.value)))
+        // goal: thin dashed line with a small label
+        goalInView?.let { gv ->
+            val gy = y(gv)
+            drawLine(
+                accent.copy(alpha = 0.7f), Offset(left, gy), Offset(size.width, gy), strokeWidth = 1.dp.toPx(),
+                pathEffect = PathEffect.dashPathEffect(floatArrayOf(4.dp.toPx(), 4.dp.toPx())),
+            )
+            val t = measurer.measure("цель ${Format.num(gv, metric.digits)}", labelStyle.copy(color = accent))
+            drawText(t, topLeft = Offset(size.width - t.size.width, gy - t.size.height - 2.dp.toPx()))
         }
 
-        // trend line
-        val path = Path()
-        visible.forEachIndexed { i, p ->
-            val o = Offset(x(p.m.timestampMs), y(p.trend))
-            if (i == 0) path.moveTo(o.x, o.y) else path.lineTo(o.x, o.y)
+        // measurements: small, faint
+        val dot = 2.dp.toPx()
+        for (p in visible) {
+            drawCircle(accent.copy(alpha = 0.28f), radius = dot, center = Offset(x(p.m.timestampMs), y(p.value)))
         }
-        drawPath(path, colors.primary, style = Stroke(width = 3.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
+
+        // trend: smooth curve (horizontal tangents at the points — no overshoot)
+        val pts = visible.map { Offset(x(it.m.timestampMs), y(it.trend)) }
+        val path = Path()
+        pts.forEachIndexed { i, o ->
+            if (i == 0) path.moveTo(o.x, o.y)
+            else {
+                val prev = pts[i - 1]
+                val mx = (prev.x + o.x) / 2f
+                path.cubicTo(mx, prev.y, mx, o.y, o.x, o.y)
+            }
+        }
+        if (pts.size > 1) {
+            val area = Path().apply {
+                addPath(path)
+                lineTo(pts.last().x, top + h)
+                lineTo(pts.first().x, top + h)
+                close()
+            }
+            drawPath(area, Brush.verticalGradient(listOf(accent.copy(alpha = 0.20f), accent.copy(alpha = 0f)), startY = top, endY = top + h))
+        }
+        drawPath(path, accent, style = Stroke(width = 2.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
+        // the latest trend value: a ringed dot
+        pts.lastOrNull()?.let { o ->
+            drawCircle(colors.surface, radius = 4.5.dp.toPx(), center = o)
+            drawCircle(accent, radius = 4.5.dp.toPx(), center = o, style = Stroke(1.75.dp.toPx()))
+        }
 
         // selection
         selected?.takeIf { it in visible }?.let { p ->
             val xx = x(p.m.timestampMs)
-            drawLine(colors.tertiary, Offset(xx, top), Offset(xx, top + h), strokeWidth = 1.5f)
-            drawCircle(colors.tertiary, radius = 5.dp.toPx(), center = Offset(xx, y(p.value)))
-            drawCircle(colors.surface, radius = 4.dp.toPx(), center = Offset(xx, y(p.trend)))
-            drawCircle(colors.primary, radius = 4.dp.toPx(), center = Offset(xx, y(p.trend)), style = Stroke(2.dp.toPx()))
+            drawLine(colors.onSurfaceVariant.copy(alpha = 0.5f), Offset(xx, top), Offset(xx, top + h), strokeWidth = hairline)
+            drawCircle(accent.copy(alpha = 0.6f), radius = 3.5.dp.toPx(), center = Offset(xx, y(p.value)))
+            drawCircle(colors.surface, radius = 4.5.dp.toPx(), center = Offset(xx, y(p.trend)))
+            drawCircle(accent, radius = 4.5.dp.toPx(), center = Offset(xx, y(p.trend)), style = Stroke(1.75.dp.toPx()))
         }
     }
 }

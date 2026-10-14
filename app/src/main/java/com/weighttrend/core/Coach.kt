@@ -32,6 +32,8 @@ object Coach {
         val recent: EnergyBalance.Estimate? = null,
         /** Set when the last 2 weeks differ clearly from the 2 weeks before. */
         val shiftNote: String? = null,
+        /** The significant shift behind [shiftNote]. */
+        val shift: EnergyBalance.Shift? = null,
     )
 
     /** Recommended pace when no date is set: 0.5 % of body weight per week. */
@@ -77,7 +79,8 @@ object Coach {
         val base = adviseOn4Weeks(trend, goal, nowMs, zone, weights)
         if (base.kind == Kind.NO_DATA) return base
         val recent = EnergyBalance.estimate(weights, nowMs, EnergyBalance.SHORT_WINDOW_DAYS, zone)
-        return base.copy(recent = recent, shiftNote = shiftNote(EnergyBalance.shift(weights, nowMs, zone)))
+        val shift = EnergyBalance.shift(weights, nowMs, zone)?.takeIf { it.significant }
+        return base.copy(recent = recent, shiftNote = shiftNote(shift), shift = shift)
     }
 
     /** Human comment on a clear change between the last 2 weeks and the 2 before; null if none. */

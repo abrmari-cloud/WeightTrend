@@ -1,6 +1,23 @@
 package com.weighttrend.ui
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Info
+import androidx.compose.material.icons.rounded.Star
+import androidx.compose.material.icons.rounded.ThumbUp
+import androidx.compose.material.icons.rounded.Warning
+import androidx.compose.material3.Icon
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -91,7 +108,9 @@ fun HomeScreen(
                 weights = points.map { it.m.timestampMs to it.m.weightKg },
             )
         }
-        CoachCard(advice, goal, points.lastOrNull()?.trend, onOpenSettings)
+        val trendNow = points.lastOrNull()?.trend
+        val mood = moodOf(advice, goal, trendNow)
+        CoachCard(advice, mood, goal, trendNow, onOpenSettings)
 
         // ----- metric selector -----
         Row(
@@ -118,11 +137,16 @@ fun HomeScreen(
         } else {
             // ----- headline -----
             Column {
-                Text("${metric.label} · тренд", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("${metric.label} · тренд".uppercase(), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Row(verticalAlignment = Alignment.Bottom) {
-                    Text(Format.num(last.trend, metric.digits), fontSize = 64.sp, fontWeight = FontWeight.SemiBold, lineHeight = 64.sp)
+                    Text(
+                        Format.num(last.trend, metric.digits),
+                        style = MaterialTheme.typography.displayLarge.merge(TabularNums),
+                        fontSize = 68.sp, lineHeight = 68.sp,
+                    )
                     if (metric.unit.isNotEmpty()) {
-                        Text(" ${metric.unit}", style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(bottom = 10.dp))
+                        Text(" ${metric.unit}", style = MaterialTheme.typography.titleLarge,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(bottom = 12.dp))
                     }
                 }
                 Text(
@@ -133,23 +157,31 @@ fun HomeScreen(
             }
 
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                DeltaCard("за неделю", Metric.delta(series, 7), metric, Modifier.weight(1f))
-                DeltaCard("за месяц", Metric.delta(series, 30), metric, Modifier.weight(1f))
-                DeltaCard("за год", Metric.delta(series, 365), metric, Modifier.weight(1f))
+                val wantDown = wantsDown(metric, goal, trendNow)
+                DeltaCard("за неделю", Metric.delta(series, 7), metric, wantDown, Modifier.weight(1f))
+                DeltaCard("за месяц", Metric.delta(series, 30), metric, wantDown, Modifier.weight(1f))
+                DeltaCard("за год", Metric.delta(series, 365), metric, wantDown, Modifier.weight(1f))
             }
 
             // ----- chart -----
-            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)) {
-                Column(Modifier.padding(12.dp)) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Range.entries.forEach { r ->
-                            FilterChip(selected = range == r, onClick = { range = r; selected = null }, label = { Text(r.label) })
-                        }
+            SoftCard {
+                Column(Modifier.padding(start = 12.dp, end = 16.dp, top = 12.dp, bottom = 14.dp)) {
+                    Segmented(Range.entries.map { it.label }, Range.entries.indexOf(range)) { i ->
+                        range = Range.entries[i]; selected = null
                     }
-                    Spacer(Modifier.height(8.dp))
+                    Spacer(Modifier.height(12.dp))
                     val toMs = System.currentTimeMillis()
                     val fromMs = range.days?.let { toMs - it * 86_400_000L } ?: series.first().m.timestampMs
-                    TrendChart(series, metric, fromMs, toMs, selected, { selected = it })
+                    val chartAccent = when (mood) {
+                        Mood.GOOD -> moodColor(Mood.GOOD).accent
+                        Mood.BAD -> moodColor(Mood.BAD).accent
+                        else -> MaterialTheme.colorScheme.primary
+                    }
+                    TrendChart(
+                        series, metric, fromMs, toMs, selected, { selected = it },
+                        accent = if (metric == Metric.WEIGHT) chartAccent else MaterialTheme.colorScheme.primary,
+                        goal = if (metric == Metric.WEIGHT) goal?.targetKg else null,
+                    )
                     val s = selected
                     Text(
                         if (s != null) "${Format.dateTime(s.m.timestampMs)}: ${Format.value(s.value, metric)}, " +
@@ -168,8 +200,8 @@ fun HomeScreen(
         val withComp = measurements.lastOrNull { it.fatPercent != null && Conditions.isStandard(it, zone) }
             ?: measurements.lastOrNull { it.fatPercent != null }
         if (withComp != null) {
-            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)) {
-                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            SoftCard {
+                Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text("Состав тела · ${Format.dateTime(withComp.timestampMs)}", style = MaterialTheme.typography.titleSmall)
                     Conditions.note(withComp, zone)?.let {
                         Text("Утреннего взвешивания с составом тела нет — показано $it.",
@@ -210,36 +242,164 @@ fun HomeScreen(
     }
 }
 
-@Composable
-private fun CoachCard(advice: Coach.Advice, goal: Goal?, trendKg: Double?, onOpenSettings: () -> Unit) {
-    val colors = MaterialTheme.colorScheme
-    val (bg, fg) = when (advice.kind) {
-        Coach.Kind.ON_TRACK, Coach.Kind.REACHED -> colors.primaryContainer to colors.onPrimaryContainer
-        Coach.Kind.TOO_FAST, Coach.Kind.WRONG_DIRECTION -> colors.tertiaryContainer to colors.onTertiaryContainer
-        else -> colors.surfaceContainerHigh to colors.onSurface
+/** GOOD = keep going (green), CAUTION = needs attention, BAD = moving the wrong way. */
+private fun moodOf(advice: Coach.Advice, goal: Goal?, trendKg: Double?): Mood {
+    val base = when (advice.kind) {
+        Coach.Kind.ON_TRACK, Coach.Kind.REACHED -> Mood.GOOD
+        Coach.Kind.TOO_SLOW, Coach.Kind.PLATEAU, Coach.Kind.TOO_FAST -> Mood.CAUTION
+        Coach.Kind.WRONG_DIRECTION -> Mood.BAD
+        Coach.Kind.NO_DATA, Coach.Kind.NO_GOAL -> Mood.NEUTRAL
     }
-    Card(colors = CardDefaults.cardColors(containerColor = bg)) {
-        Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text("Энергобаланс за 4 недели", style = MaterialTheme.typography.labelMedium, color = fg)
-            Text(advice.headline, style = MaterialTheme.typography.titleMedium, color = fg)
-            Text(advice.text, style = MaterialTheme.typography.bodyMedium, color = fg)
-            advice.recent?.let { r ->
+    // A fresh turn for the worse dims "good" to "caution", even before the 4-week number reacts.
+    return if (base == Mood.GOOD && shiftIsWorse(advice, goal, trendKg) == true) Mood.CAUTION else base
+}
+
+/** true = the last 2 weeks moved away from the goal, false = towards it, null = no shift / no goal. */
+private fun shiftIsWorse(advice: Coach.Advice, goal: Goal?, trendKg: Double?): Boolean? {
+    val shift = advice.shift ?: return null
+    if (goal == null || trendKg == null) return null
+    val direction = Math.signum(goal.targetKg - trendKg).takeIf { it != 0.0 } ?: return null
+    return shift.changeKcal * direction < 0
+}
+
+/** For colouring changes: true = lower is better, false = higher is better, null = neutral. */
+private fun wantsDown(metric: Metric, goal: Goal?, trendKg: Double?): Boolean? = when (metric) {
+    Metric.FAT -> true
+    Metric.WEIGHT, Metric.BMI -> if (goal != null && trendKg != null && kotlin.math.abs(goal.targetKg - trendKg) > 0.3)
+        goal.targetKg < trendKg else null
+    else -> null
+}
+
+/** Flat surface with a hairline border instead of a shadow. */
+@Composable
+fun SoftCard(
+    modifier: Modifier = Modifier,
+    container: Color = MaterialTheme.colorScheme.surfaceContainerLow,
+    content: @Composable () -> Unit,
+) {
+    Card(
+        modifier = modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.large,
+        colors = CardDefaults.cardColors(containerColor = container),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
+    ) { content() }
+}
+
+/** Thin pill-shaped segmented control. */
+@Composable
+private fun Segmented(labels: List<String>, selectedIndex: Int, onSelect: (Int) -> Unit) {
+    val c = MaterialTheme.colorScheme
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clip(CircleShape)
+            .background(c.surfaceContainerHighest.copy(alpha = 0.6f))
+            .padding(3.dp),
+    ) {
+        labels.forEachIndexed { i, label ->
+            val on = i == selectedIndex
+            Box(
+                Modifier
+                    .weight(1f)
+                    .clip(CircleShape)
+                    .background(if (on) c.surface else Color.Transparent)
+                    .clickable { onSelect(i) }
+                    .padding(vertical = 7.dp),
+                contentAlignment = Alignment.Center,
+            ) {
                 Text(
-                    "За 2 недели: ${Coach.signedKcal(r.kcalPerDay)} в день ± ${r.errorKcal.roundToInt()} — быстрее реагирует, но шумнее",
-                    style = MaterialTheme.typography.bodySmall, color = fg,
+                    label,
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = if (on) FontWeight.SemiBold else FontWeight.Normal,
+                    color = if (on) c.onSurface else c.onSurfaceVariant,
                 )
             }
-            advice.shiftNote?.let { note ->
-                Text("⚠ $note", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold, color = fg)
+        }
+    }
+}
+
+@Composable
+private fun CoachCard(advice: Coach.Advice, mood: Mood, goal: Goal?, trendKg: Double?, onOpenSettings: () -> Unit) {
+    val mc = moodColor(mood)
+    val surface = MaterialTheme.colorScheme.surface
+    val fg = mc.onContainer
+    val (icon, badge) = when {
+        advice.kind == Coach.Kind.REACHED -> Icons.Rounded.Star to "Цель достигнута"
+        mood == Mood.GOOD -> Icons.Rounded.ThumbUp to "Так держать"
+        mood == Mood.BAD -> Icons.Rounded.Warning to "Не в ту сторону"
+        mood == Mood.CAUTION -> Icons.Rounded.Info to "Нужно внимание"
+        else -> Icons.Rounded.Info to null
+    }
+    Card(
+        shape = MaterialTheme.shapes.large,
+        colors = CardDefaults.cardColors(containerColor = Color.Transparent),
+        border = BorderStroke(1.dp, mc.accent.copy(alpha = 0.25f)),
+    ) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .background(Brush.linearGradient(listOf(mc.container, lerp(mc.container, surface, 0.6f))))
+                .padding(20.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    Modifier.size(40.dp).clip(CircleShape).background(mc.accent.copy(alpha = 0.16f)),
+                    contentAlignment = Alignment.Center,
+                ) { Icon(icon, contentDescription = null, tint = mc.accent, modifier = Modifier.size(22.dp)) }
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Text("ЭНЕРГОБАЛАНС · 4 НЕДЕЛИ", style = MaterialTheme.typography.labelMedium, color = fg.copy(alpha = 0.65f))
+                    if (badge != null) Text(badge, style = MaterialTheme.typography.labelLarge, color = mc.accent, fontWeight = FontWeight.SemiBold)
+                }
+            }
+            Text(advice.headline, style = MaterialTheme.typography.headlineSmall.merge(TabularNums), color = fg)
+            Text(advice.text, style = MaterialTheme.typography.bodyMedium, color = fg.copy(alpha = 0.85f))
+
+            if (advice.recent != null || (goal != null && trendKg != null && advice.kind != Coach.Kind.REACHED)) {
+                Box(Modifier.fillMaxWidth().height(1.dp).background(fg.copy(alpha = 0.10f)))
+            }
+            advice.recent?.let { r ->
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("За 2 недели", style = MaterialTheme.typography.bodyMedium, color = fg)
+                        Text("быстрее реагирует, но шумнее", style = MaterialTheme.typography.bodySmall, color = fg.copy(alpha = 0.6f))
+                    }
+                    Text(
+                        "${Coach.signedKcal(r.kcalPerDay)} ± ${r.errorKcal.roundToInt()}",
+                        style = MaterialTheme.typography.titleMedium.merge(TabularNums), color = fg,
+                    )
+                }
             }
             if (goal != null && trendKg != null && advice.kind != Coach.Kind.REACHED) {
-                val left = trendKg - goal.targetKg
-                Text(
-                    "Цель ${Format.kg(goal.targetKg)}" +
-                        (goal.targetDate?.let { " к ${Format.shortDate(it)} ${it.year}" } ?: "") +
-                        " · осталось ${Format.kg(kotlin.math.abs(left))}",
-                    style = MaterialTheme.typography.bodySmall, color = fg,
-                )
+                val left = kotlin.math.abs(trendKg - goal.targetKg)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        "Цель ${Format.kg(goal.targetKg)}" + (goal.targetDate?.let { " к ${Format.shortDate(it)} ${it.year}" } ?: ""),
+                        style = MaterialTheme.typography.bodyMedium, color = fg, modifier = Modifier.weight(1f),
+                    )
+                    Text("осталось ${Format.kg(left)}", style = MaterialTheme.typography.titleMedium.merge(TabularNums), color = fg)
+                }
+            }
+            advice.shiftNote?.let { note ->
+                val worse = shiftIsWorse(advice, goal, trendKg)
+                val sc = moodColor(when (worse) { true -> Mood.BAD; false -> Mood.GOOD; null -> Mood.CAUTION })
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .clip(MaterialTheme.shapes.medium)
+                        .background(surface.copy(alpha = 0.7f))
+                        .border(1.dp, sc.accent.copy(alpha = 0.35f), MaterialTheme.shapes.medium)
+                        .padding(12.dp),
+                    verticalAlignment = Alignment.Top,
+                ) {
+                    Icon(
+                        if (worse == false) Icons.Rounded.ThumbUp else Icons.Rounded.Warning,
+                        contentDescription = null, tint = sc.accent, modifier = Modifier.size(18.dp),
+                    )
+                    Spacer(Modifier.width(10.dp))
+                    Text(note, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurface)
+                }
             }
             if (advice.kind == Coach.Kind.NO_GOAL) {
                 TextButton(onClick = onOpenSettings, contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)) {
@@ -251,25 +411,34 @@ private fun CoachCard(advice: Coach.Advice, goal: Goal?, trendKg: Double?, onOpe
 }
 
 @Composable
-private fun DeltaCard(label: String, delta: Double?, metric: Metric, modifier: Modifier) {
-    Card(modifier, colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)) {
-        Column(Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
+private fun DeltaCard(label: String, delta: Double?, metric: Metric, wantDown: Boolean?, modifier: Modifier) {
+    val c = MaterialTheme.colorScheme
+    val good: Boolean? = when {
+        delta == null || wantDown == null || kotlin.math.abs(delta) < 0.05 -> null
+        else -> (delta < 0) == wantDown
+    }
+    val color = when (good) { true -> moodColor(Mood.GOOD).accent; false -> moodColor(Mood.BAD).accent; null -> c.onSurface }
+    SoftCard(modifier) {
+        Column(Modifier.padding(horizontal = 14.dp, vertical = 12.dp)) {
             Text(
-                delta?.let { Format.signed(it) + if (metric.unit.isNotEmpty()) " ${metric.unit}" else "" } ?: "—",
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.onSecondaryContainer,
+                delta?.let {
+                    val arrow = if (it > 0.05) "↑ " else if (it < -0.05) "↓ " else ""
+                    arrow + Format.signed(it).trimStart('+', '−') + if (metric.unit.isNotEmpty()) " ${metric.unit}" else ""
+                } ?: "—",
+                style = MaterialTheme.typography.titleMedium.merge(TabularNums),
+                color = color,
             )
-            Text(label, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSecondaryContainer)
+            Text(label, style = MaterialTheme.typography.bodySmall, color = c.onSurfaceVariant)
         }
     }
 }
 
 @Composable
 private fun MetricValue(label: String, value: String?, modifier: Modifier, onClick: (() -> Unit)?) {
-    val m = if (onClick != null && value != null) modifier.clickable(onClick = onClick) else modifier
+    val m = if (onClick != null && value != null) modifier.clip(MaterialTheme.shapes.small).clickable(onClick = onClick) else modifier
     Column(m) {
         Text(label, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Text(value ?: "—", style = MaterialTheme.typography.titleLarge)
+        Text(value ?: "—", style = MaterialTheme.typography.titleLarge.merge(TabularNums))
     }
 }
 
