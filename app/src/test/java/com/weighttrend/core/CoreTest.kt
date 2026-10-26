@@ -348,4 +348,24 @@ class CoreTest {
         assertEquals(7.0, r.hoursByNight.getValue(LocalDateOf(2026, 10, 14)), 1e-9)
         assertEquals(setOf("com.google.android.apps.wellbeing"), r.ignoredOrigins)
     }
+
+    // ---------------------------------------------------------------- 0.10
+
+    @Test fun kcalPerWorkoutUsesOnlyWorkoutsWithCalories() {
+        val w = WeeklyAnalysis.Week(LocalDateOf(2026, 10, 5), workoutKcal = 600.0, kcalSessions = 2,
+            exercises = listOf(WeeklyAnalysis.Exercise("силовая", 3, 270)))
+        assertEquals(300.0, w.kcalPerWorkout!!, 1e-9)
+    }
+
+    @Test fun reportStepsAreExtraAndNoNegativeZero() {
+        assertTrue(Coach.equivalent(200.0, 63.0).contains("шагов в день к обычным"))
+        val p = UserProfile(false, 1982, 7, 170.0)
+        val ms = (0 until 40).map { i ->
+            Measurement(timestampMs = now - (39 - i) * day, weightKg = 63.0, fatPercent = 33.0 - i * 0.0005,
+                waterPercent = 47.9, impedanceOhm = 570)
+        }
+        val text = ConsultationReport.build(ms, p, null, emptyList(), null, now, zone)
+        assertFalse(text, text.contains("−0,0"))
+        assertTrue(text, text.contains("кг за 4 недели"))
+    }
 }

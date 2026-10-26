@@ -201,7 +201,7 @@ object Coach {
         fun walk(k: Double): String {
             val km = EnergyBalance.walkingKm(k, weightKg)
             val steps = ((EnergyBalance.steps(km) + 250) / 500) * 500
-            return "${num(km)} км ходьбы, около ${String.format(RU, "%,d", steps)} шагов"
+            return "${num(km)} км ходьбы — около +${String.format(RU, "%,d", steps)} шагов в день к обычным"
         }
         fun food(k: Double) = when {
             k <= 120 -> "ложка масла или ломтик хлеба"
@@ -215,5 +215,8 @@ object Coach {
 
     private fun num(v: Double) = String.format(RU, "%.1f", v)
     fun signedKcal(v: Double) = (if (v > 0) "+" else if (v < 0) "−" else "") + "${abs(v).roundToInt()} ккал"
-    private fun signedKg(v: Double) = (if (v > 0) "+" else if (v < 0) "−" else "") + String.format(RU, "%.2f", abs(v))
+    private fun signedKg(v: Double): String {
+        val text = String.format(RU, "%.2f", abs(v))
+        return (if (text.none { it in '1'..'9' }) "" else if (v > 0) "+" else "−") + text
+    }
 }

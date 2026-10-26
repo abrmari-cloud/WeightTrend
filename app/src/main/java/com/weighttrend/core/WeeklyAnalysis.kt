@@ -23,18 +23,23 @@ object WeeklyAnalysis {
         /** Energy balance from neighbouring weekly average weights; null without them. */
         val balanceKcal: Double? = null,
         /**
-         * Active calories for the whole week as other apps wrote them to Health Connect.
-         * Garmin writes only recorded workouts there, so this is a lower bound of real activity.
+         * Active calories of the week's recorded workouts (counted inside each workout's time window).
+         * Only workouts recorded on the watch are in Health Connect, so this is a lower bound.
          */
         val workoutKcal: Double? = null,
+        /** Workouts that had calorie data inside their time window. */
+        val kcalSessions: Int = 0,
         val exercises: List<Exercise> = emptyList(),
         val intakeKcal: Double? = null,    // average per logged day
         val proteinG: Double? = null,      // average per logged day
         val daysLogged: Int = 0,
     ) {
         val sessions: Int get() = exercises.sumOf { it.sessions }
-        /** Average calories per recorded workout, when both are known. */
-        val kcalPerWorkout: Double? get() = workoutKcal?.takeIf { sessions > 0 }?.let { it / sessions }
+        /** Average calories per recorded workout that had calorie data. */
+        val kcalPerWorkout: Double? get() {
+            val n = if (kcalSessions > 0) kcalSessions else sessions
+            return workoutKcal?.takeIf { n > 0 }?.let { it / n }
+        }
     }
 
     data class Exercise(val type: String, val sessions: Int, val minutes: Int)
@@ -98,7 +103,7 @@ object WeeklyAnalysis {
             val e = extra[w]
             Week(
                 start = w, avgSteps = steps[w], avgSleepHours = sleep[w], avgWeight = avg[w], balanceKcal = bal[w],
-                workoutKcal = e?.workoutKcal, exercises = e?.exercises ?: emptyList(),
+                workoutKcal = e?.workoutKcal, kcalSessions = e?.kcalSessions ?: 0, exercises = e?.exercises ?: emptyList(),
                 intakeKcal = e?.intakeKcal, proteinG = e?.proteinG, daysLogged = e?.daysLogged ?: 0,
             )
         }

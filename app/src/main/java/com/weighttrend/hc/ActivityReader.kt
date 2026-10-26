@@ -10,6 +10,7 @@ import androidx.health.connect.client.records.NutritionRecord
 import androidx.health.connect.client.records.SleepSessionRecord
 import androidx.health.connect.client.records.StepsRecord
 import androidx.health.connect.client.request.AggregateGroupByPeriodRequest
+import androidx.health.connect.client.request.AggregateRequest
 import androidx.health.connect.client.request.ReadRecordsRequest
 import androidx.health.connect.client.time.TimeRangeFilter
 import com.weighttrend.core.SleepNights
@@ -172,23 +173,15 @@ object ActivityReader {
         client: HealthConnectClient, week: LocalDate, from: LocalDateTime, to: LocalDateTime, zone: ZoneId,
         canActive: Boolean, canExercise: Boolean, canNutrition: Boolean,
     ): WeeklyAnalysis.Week {
-        var active: Double? = null
         var intake: Double? = null
         var protein: Double? = null
         var daysLogged = 0
-        if (canActive || canNutrition) {
-            val metrics = buildSet {
-                if (canActive) add(ActiveCaloriesBurnedRecord.ACTIVE_CALORIES_TOTAL)
-                if (canNutrition) { add(NutritionRecord.ENERGY_TOTAL); add(NutritionRecord.PROTEIN_TOTAL) }
-            }
+        if (canNutrition) {
+            val metrics = setOf(NutritionRecord.ENERGY_TOTAL, NutritionRecord.PROTEIN_TOTAL)
             val days = client.aggregateGroupByPeriod(
                 AggregateGroupByPeriodRequest(metrics, TimeRangeFilter.between(from, to), Period.ofDays(1))
             )
-            if (canActive) {
-                days.mapNotNull { it.result[ActiveCaloriesBurnedRecord.ACTIVE_CALORIES_TOTAL]?.inKilocalories?.takeIf { k -> k > 0 } }
-                    .takeIf { it.isNotEmpty() }?.let { active = it.sum() }   // week total: Garmin sends only recorded workouts
-            }
-            if (canNutrition) {
+            run {
                 val logged = days.filter { (it.result[NutritionRecord.ENERGY_TOTAL]?.inKilocalories ?: 0.0) > 0 }
                 daysLogged = logged.size
                 if (logged.isNotEmpty()) {
@@ -198,24 +191,52 @@ object ActivityReader {
             }
         }
         val exercises = mutableListOf<WeeklyAnalysis.Exercise>()
+        var workoutKcal: Double? = null
+        var kcalSessions = 0
         if (canExercise) {
-            val byType = mutableMapOf<String, Pair<Int, Long>>()
+            val sessions = mutableListOf<ExerciseSessionRecord>()
             var token: String? = null
             do {
                 val resp = client.readRecords(
                     ReadRecordsRequest(ExerciseSessionRecord::class, TimeRangeFilter.between(from, to), pageToken = token)
                 )
-                for (e in resp.records) {
-                    val name = EXERCISE_NAMES[e.exerciseType] ?: "другое"
-                    val (n, min) = byType[name] ?: (0 to 0L)
-                    byType[name] = (n + 1) to (min + Duration.between(e.startTime, e.endTime).toMinutes())
-                }
+                sessions += resp.records
                 token = resp.pageToken
             } while (token != null)
+            // The same workout written by two apps counts once (keep the longer record).
+            val kept = mutableListOf<ExerciseSessionRecord>()
+            for (e in sessions.sortedByDescending { Duration.between(it.startTime, it.endTime) }) {
+                val len = Duration.between(e.startTime, e.endTime).toMinutes()
+                val clash = kept.any { k ->
+                    val overlap = Duration.between(maxOf(k.startTime, e.startTime), minOf(k.endTime, e.endTime)).toMinutes()
+                    overlap > minOf(len, Duration.between(k.startTime, k.endTime).toMinutes()) / 2
+                }
+                if (!clash) kept += e
+            }
+            val byType = mutableMapOf<String, Pair<Int, Long>>()
+            for (e in kept) {
+                val name = EXERCISE_NAMES[e.exerciseType] ?: "другое"
+                val (n, min) = byType[name] ?: (0 to 0L)
+                byType[name] = (n + 1) to (min + Duration.between(e.startTime, e.endTime).toMinutes())
+                // Active calories only inside the workout's own time window — not the whole day's
+                // active calories, which some apps also write to Health Connect.
+                if (canActive) {
+                    val kcal = client.aggregate(
+                        AggregateRequest(
+                            setOf(ActiveCaloriesBurnedRecord.ACTIVE_CALORIES_TOTAL),
+                            TimeRangeFilter.between(e.startTime, e.endTime),
+                        )
+                    )[ActiveCaloriesBurnedRecord.ACTIVE_CALORIES_TOTAL]?.inKilocalories
+                    if (kcal != null && kcal > 0) {
+                        workoutKcal = (workoutKcal ?: 0.0) + kcal
+                        kcalSessions++
+                    }
+                }
+            }
             byType.forEach { (t, v) -> exercises += WeeklyAnalysis.Exercise(t, v.first, v.second.toInt()) }
         }
         return WeeklyAnalysis.Week(
-            start = week, workoutKcal = active, exercises = exercises.sortedByDescending { it.minutes },
+            start = week, workoutKcal = workoutKcal, kcalSessions = kcalSessions, exercises = exercises.sortedByDescending { it.minutes },
             intakeKcal = intake, proteinG = protein, daysLogged = daysLogged,
         )
     }

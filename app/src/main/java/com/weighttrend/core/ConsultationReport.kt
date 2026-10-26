@@ -59,13 +59,15 @@ object ConsultationReport {
             return signed(trendNow - then)
         }
         val recent = trend.count { it.first >= nowMs - 28 * DAY_MS }
-        appendLine("Вес по тренду: ${kg(trendNow)} (за неделю ${trendChange(7)}, за 4 недели ${trendChange(28)}, " +
-            "за 12 недель ${trendChange(84)} кг). Взвешиваний за 4 недели: $recent.")
+        appendLine("Вес по тренду: ${kg(trendNow)}. Изменение сглаженного тренда: за неделю ${trendChange(7)}, " +
+            "за 12 недель ${trendChange(84)} кг. Взвешиваний за 4 недели: $recent.")
         val raw = sorted.map { it.timestampMs to it.weightKg }
         val est = EnergyBalance.estimate(raw, nowMs, zone = zone)
         if (est != null) {
             appendLine("Энергобаланс за 4 недели: ${kcal(est.kcalPerDay)}/день ± ${int(est.errorKcal)} " +
-                "(${signed(est.kgPerWeek, 2)} кг/нед), по наклону взвешиваний × 7700 ккал/кг.")
+                "(вес ${signed(est.kgPerWeek * 4, 1)} кг за 4 недели, ${signed(est.kgPerWeek, 2)} кг/нед) — " +
+                "по наклону всех взвешиваний × 7700 ккал/кг. Сглаженный тренд запаздывает примерно на неделю, " +
+                "поэтому разница его двух точек может расходиться с этой оценкой; для баланса верна эта.")
         }
         EnergyBalance.estimate(raw, nowMs, EnergyBalance.SHORT_WINDOW_DAYS, zone)?.let { r ->
             appendLine("Энергобаланс за 2 недели: ${kcal(r.kcalPerDay)}/день ± ${int(r.errorKcal)} (быстрее реагирует, но шумнее).")
@@ -124,7 +126,7 @@ object ConsultationReport {
         val shown = weeks.filter { !it.start.isAfter(today) }.takeLast(weeksShown)
         if (shown.isNotEmpty()) {
             appendLine("По неделям (с понедельника):")
-            appendLine("неделя | вес ср. | баланс ккал/день | шаги/день | сон ч | ккал тренировок за нед. | тренировки | еда ккал/день | белок г/день")
+            appendLine("неделя | вес ср. | баланс ккал/день | шаги/день | сон ч | ккал тренировок за нед. (записано на часах) | тренировки (записано на часах) | еда ккал/день | белок г/день")
             for (w in shown.asReversed()) {
                 appendLine(listOf(
                     SHORT.format(w.start),
@@ -182,6 +184,10 @@ object ConsultationReport {
     private fun cm(v: Double) = if (abs(v - v.roundToInt()) < 0.05) v.roundToInt().toString() else num(v)
     private fun int(v: Double) = String.format(RU, "%,d", v.roundToInt())
     private fun kcal(v: Double) = (if (v > 0) "+" else if (v < 0) "−" else "") + "${int(abs(v))} ккал"
-    private fun signed(v: Double, digits: Int = 1) =
-        (if (v > 0) "+" else if (v < 0) "−" else "±") + num(abs(v), digits)
+    /** Signed number; anything that rounds to zero is shown as plain "0,0". */
+    private fun signed(v: Double, digits: Int = 1): String {
+        val text = num(abs(v), digits)
+        val isZero = text.none { it in '1'..'9' }
+        return (if (isZero) "" else if (v > 0) "+" else "−") + text
+    }
 }
