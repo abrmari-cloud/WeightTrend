@@ -12,6 +12,7 @@ import androidx.health.connect.client.records.StepsRecord
 import androidx.health.connect.client.request.AggregateGroupByPeriodRequest
 import androidx.health.connect.client.request.ReadRecordsRequest
 import androidx.health.connect.client.time.TimeRangeFilter
+import com.weighttrend.core.SleepNights
 import com.weighttrend.core.WeeklyAnalysis
 import java.time.Duration
 import java.time.LocalDate
@@ -42,6 +43,26 @@ object ActivityReader {
     val PERMISSIONS = CORE + OPTIONAL + HISTORY_PERMISSION
     private val REQUIRED = CORE
 
+    private val AWAKE_STAGES = setOf(
+        SleepSessionRecord.STAGE_TYPE_AWAKE,
+        SleepSessionRecord.STAGE_TYPE_AWAKE_IN_BED,
+        SleepSessionRecord.STAGE_TYPE_OUT_OF_BED,
+    )
+
+    /** Human names for apps that commonly write sleep. */
+    fun appName(pkg: String): String = when (pkg) {
+        SleepNights.GARMIN -> "Garmin Connect"
+        "com.google.android.apps.fitness" -> "Google Fit"
+        "com.samsung.android.wear.shealth", "com.sec.android.app.shealth" -> "Samsung Health"
+        "com.google.android.apps.wellbeing" -> "Digital Wellbeing"
+        "com.urbandroid.sleep" -> "Sleep as Android"
+        "com.xiaomi.wearable", "com.mi.health" -> "Mi Fitness"
+        "com.huami.watch.hmwatchmanager", "com.xiaomi.hm.health" -> "Zepp"
+        "com.ouraring.oura" -> "Oura"
+        "com.fitbit.FitbitMobile" -> "Fitbit"
+        else -> pkg
+    }
+
     /** Readable names for common workout types (others are grouped as "другое"). */
     private val EXERCISE_NAMES = mapOf(
         ExerciseSessionRecord.EXERCISE_TYPE_RUNNING to "бег",
@@ -67,6 +88,9 @@ object ActivityReader {
         /** Active calories, workouts and nutrition per week (only where permitted and present). */
         val extra: Map<LocalDate, WeeklyAnalysis.Week> = emptyMap(),
         val missingOptional: Set<String> = emptySet(),
+        /** Apps whose sleep was used (package -> nights) and apps whose sleep was ignored. */
+        val sleepSources: Map<String, Int> = emptyMap(),
+        val ignoredSleepSources: Set<String> = emptySet(),
     )
 
     suspend fun granted(context: Context): Set<String> =
@@ -85,7 +109,7 @@ object ActivityReader {
         val extra = mutableMapOf<LocalDate, WeeklyAnalysis.Week>()
         val thisWeek = WeeklyAnalysis.mondayOf(LocalDate.now(zone))
         val steps = mutableMapOf<LocalDate, Double>()
-        val sleep = mutableMapOf<LocalDate, Double>()
+        val sessions = mutableListOf<SleepNights.Session>()
         var denied = 0
 
         for (i in weeks - 1 downTo 0) {
@@ -103,8 +127,7 @@ object ActivityReader {
                 ).mapNotNull { it.result[StepsRecord.COUNT_TOTAL]?.takeIf { n -> n > 0 } }
                 if (days.isNotEmpty()) steps[week] = days.average()
 
-                // Sleep: sessions grouped by the night they end on.
-                val nights = mutableMapOf<LocalDate, Duration>()
+                // Sleep: raw sessions; deduplicated per night after the loop (see SleepNights).
                 var token: String? = null
                 do {
                     val resp = client.readRecords(
@@ -114,13 +137,14 @@ object ActivityReader {
                             pageToken = token,
                         )
                     )
-                    for (s in resp.records) {
-                        val night = s.endTime.atZone(zone).toLocalDate()
-                        nights[night] = (nights[night] ?: Duration.ZERO) + Duration.between(s.startTime, s.endTime)
-                    }
+                    for (s in resp.records) sessions += SleepNights.Session(
+                        start = s.startTime, end = s.endTime,
+                        origin = s.metadata.dataOrigin.packageName,
+                        asleepMinutes = s.stages.takeIf { it.isNotEmpty() }?.filter { it.stage !in AWAKE_STAGES }
+                            ?.sumOf { Duration.between(it.startTime, it.endTime).toMinutes() },
+                    )
                     token = resp.pageToken
                 } while (token != null)
-                if (nights.isNotEmpty()) sleep[week] = nights.values.map { it.toMinutes() / 60.0 }.average()
 
                 extra[week] = readExtra(client, week, from, to, zone, canActive, canExercise, canNutrition)
             } catch (e: SecurityException) {
@@ -130,6 +154,10 @@ object ActivityReader {
                 Log.w(TAG, "week $week", e)
             }
         }
+        val nights = SleepNights.perNight(sessions.distinctBy { Triple(it.start, it.end, it.origin) }, zone)
+        val sleep = nights.hoursByNight.entries
+            .groupBy({ WeeklyAnalysis.mondayOf(it.key) }, { it.value })
+            .mapValues { (_, h) -> h.average() }
         val missing = buildSet {
             if (!canActive) add("активные калории")
             if (!canExercise) add("тренировки")
@@ -137,7 +165,7 @@ object ActivityReader {
         }
         return Result(steps, sleep, history, denied, extra.filterValues {
             it.workoutKcal != null || it.exercises.isNotEmpty() || it.intakeKcal != null
-        }, missing)
+        }, missing, nights.usedOrigins, nights.ignoredOrigins)
     }
 
     private suspend fun readExtra(

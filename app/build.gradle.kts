@@ -14,8 +14,8 @@ android {
         applicationId = "com.weighttrend"
         minSdk = 31
         targetSdk = 36
-        versionCode = 8
-        versionName = "0.8"
+        versionCode = 9
+        versionName = "0.9"
     }
 
     // A fixed key, so every build from GitHub installs as an update over the

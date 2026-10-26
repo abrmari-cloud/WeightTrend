@@ -330,4 +330,22 @@ class CoreTest {
         assertTrue(text, text.contains("≈566 ккал за тренировку"))
         assertTrue(text, text.contains("нижняя граница"))
     }
+
+    // ---------------------------------------------------------------- 0.9
+
+    @Test fun sleepNotDoubleCountedAcrossApps() {
+        fun at(d: Int, h: Int, m: Int = 0) = java.time.ZonedDateTime.of(2026, 10, d, h, m, 0, 0, zone).toInstant()
+        val garmin = SleepNights.GARMIN
+        val sessions = listOf(
+            SleepNights.Session(at(12, 23), at(13, 7, 30), garmin, asleepMinutes = 7 * 60 + 10),  // 8.5 h in bed, 7:10 asleep
+            SleepNights.Session(at(12, 22, 45), at(13, 7, 45), "com.google.android.apps.wellbeing"), // same night, other app
+            SleepNights.Session(at(13, 23, 30), at(14, 6, 30), "com.other", null),              // night without Garmin
+            SleepNights.Session(at(13, 23, 30), at(14, 6, 30), "com.other", null),              // exact duplicate
+            SleepNights.Session(at(14, 14), at(14, 14, 40), garmin, null),                      // nap
+        )
+        val r = SleepNights.perNight(sessions, zone)
+        assertEquals(7 + 10 / 60.0, r.hoursByNight.getValue(LocalDateOf(2026, 10, 13)), 1e-9)
+        assertEquals(7.0, r.hoursByNight.getValue(LocalDateOf(2026, 10, 14)), 1e-9)
+        assertEquals(setOf("com.google.android.apps.wellbeing"), r.ignoredOrigins)
+    }
 }

@@ -137,6 +137,17 @@ private fun Results(r: ActivityReader.Result, weights: List<Pair<Long, Double>>,
             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error,
         )
     }
+    if (r.sleepSources.isNotEmpty()) {
+        Text(
+            "Сон: " + r.sleepSources.entries.sortedByDescending { it.value }
+                .joinToString(", ") { "${ActivityReader.appName(it.key)} (${it.value} ноч.)" } +
+                (if (r.ignoredSleepSources.isNotEmpty())
+                    ". Не учитываются дубли от: " + r.ignoredSleepSources.joinToString(", ") { ActivityReader.appName(it) }
+                else "") +
+                ". Одна ночь — одно приложение, время бодрствования и дневной сон не считаются.",
+            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
     if (r.missingOptional.isNotEmpty()) {
         Text("Нет доступа: ${r.missingOptional.joinToString(", ")} — для отчёта их можно разрешить.",
             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
